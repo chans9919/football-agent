@@ -4,10 +4,10 @@ import os
 from datetime import datetime, timedelta
 
 API_KEY = os.environ.get("FOOTBALL_DATA_API_KEY")
+ODDS_API_KEY = os.environ.get("ODDS_API_KEY", "")  # 如果没设置就是空字符串
 BASE_URL = "https://api.football-data.org/v4"
 
-# 你要抓取的联赛代码列表（可自行增删）
-LEAGUES = ["PL", "PD", "BL1", "SA", "FL1"]  # 英超、西甲、德甲、意甲、法甲
+LEAGUES = ["PL", "PD", "BL1", "SA", "FL1"]
 
 def fetch_league_matches(league_code, days_past=100):
     headers = {"X-Auth-Token": API_KEY}
@@ -24,7 +24,6 @@ def fetch_league_matches(league_code, days_past=100):
     if response.status_code != 200:
         print(f"联赛 {league_code} 请求失败，状态码 {response.status_code}")
         return pd.DataFrame()
-    
     matches = response.json()["matches"]
     rows = []
     for m in matches:
@@ -40,10 +39,58 @@ def fetch_league_matches(league_code, days_past=100):
         })
     return pd.DataFrame(rows)
 
+def fetch_odds():
+    """从 The Odds API 获取未来比赛的赔率（胜平负）"""
+    if not ODDS_API_KEY:
+        print("未设置 ODDS_API_KEY，跳过赔率抓取")
+        return pd.DataFrame()
+    # sports key 对应五大联赛
+    sports = "soccer_epl,soccer_spain_la_liga,soccer_germany_bundesliga,soccer_italy_serie_a,soccer_france_ligue_one"
+    url = f"https://api.the-odds-api.com/v4/sports/{sports}/odds/"
+    params = {
+        "apiKey": ODDS_API_KEY,
+        "regions": "eu",           # 欧洲博彩公司
+        "markets": "h2h",          # 胜平负
+        "oddsFormat": "decimal",
+        "dateFormat": "iso",
+    }
+    response = requests.get(url, params=params)
+    if response.status_code != 200:
+        print(f"赔率请求失败，状态码 {response.status_code}")
+        return pd.DataFrame()
+    data = response.json()
+    rows = []
+    for match in data:
+        home = match["home_team"]
+        away = match["away_team"]
+        commence_time = match["commence_time"]
+        # 从多家博彩公司中找出最优赔率（最低赔率 = 最高概率）
+        best_home = best_draw = best_away = None
+        for bk in match.get("bookmakers", []):
+            for market in bk.get("markets", []):
+                if market["key"] == "h2h":
+                    outcomes = {o["name"]: o["price"] for o in market["outcomes"]}
+                    # 注意：主队名称可能不同，我们暂时用 outcomes 的键来判断
+                    # 先直接取每个博彩公司的主胜/平/客胜，然后保留最低赔率
+                    if best_home is None or outcomes.get(home, 999) < best_home:
+                        best_home = outcomes.get(home)
+                        best_draw = outcomes.get("Draw")
+                        best_away = outcomes.get(away)
+        if best_home is not None:
+            rows.append({
+                "home_team": home,
+                "away_team": away,
+                "commence_time": commence_time,
+                "odds_home": best_home,
+                "odds_draw": best_draw,
+                "odds_away": best_away
+            })
+    return pd.DataFrame(rows)
+
 if __name__ == "__main__":
     all_frames = []
     for league in LEAGUES:
-        print(f"正在抓取 {league} ...")
+        print(f"正在抓取 {league} 历史比赛...")
         df = fetch_league_matches(league, days_past=100)
         if not df.empty:
             all_frames.append(df)
@@ -51,6 +98,15 @@ if __name__ == "__main__":
         final_df = pd.concat(all_frames, ignore_index=True)
         os.makedirs("data", exist_ok=True)
         final_df.to_csv("data/matches.csv", index=False)
-        print(f"共抓取 {len(final_df)} 场比赛")
+        print(f"共抓取 {len(final_df)} 场历史比赛")
     else:
-        print("未抓取到任何比赛数据")
+        print("未抓取到历史比赛数据")
+
+    # 抓取赔率
+    odds_df = fetch_odds()
+    if not odds_df.empty:
+        os.makedirs("data", exist_ok=True)
+        odds_df.to_csv("data/odds.csv", index=False)
+        print(f"抓取到 {len(odds_df)} 场比赛的赔率")
+    else:
+        print("未抓取到赔率数据")
