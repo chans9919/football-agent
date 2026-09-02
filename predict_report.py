@@ -19,7 +19,7 @@ LEAGUE_NAMES = {
     "FL1": "法甲"
 }
 
-# ================== 球队中文名映射（大幅扩充） ==================
+# ================== 球队中文名映射（保持不变） ==================
 TEAM_NAMES_ZH = {
     # 英超
     "Manchester City FC": "曼城",
@@ -174,7 +174,6 @@ def get_upcoming_matches(league_code, days_ahead=3):
     return upcoming
 
 def poisson_prob_matrix(lambda_home, lambda_away, max_goals=8):
-    """计算泊松比分矩阵"""
     matrix = np.zeros((max_goals+1, max_goals+1))
     for i in range(max_goals+1):
         for j in range(max_goals+1):
@@ -245,16 +244,77 @@ def match_probabilities(lambda_home, lambda_away):
         "total_goals": sorted_total
     }
 
+def calculate_elo(df, initial=1500):
+    """
+    根据历史比赛数据计算每支球队的当前 ELO 评分。
+    K 因子自适应：出场次数少于 10 场的球队用 K=40，否则 K=25。
+    """
+    elo = {}
+    games_played = {}
+    df = df.sort_values("date")
+    for _, row in df.iterrows():
+        home = row["home_team"]
+        away = row["away_team"]
+        hg = row["home_goals"]
+        ag = row["away_goals"]
+        if home not in elo:
+            elo[home] = initial
+            games_played[home] = 0
+        if away not in elo:
+            elo[away] = initial
+            games_played[away] = 0
+        # 根据比赛场次选择 K 因子
+        k_home = 40 if games_played[home] < 10 else 25
+        k_away = 40 if games_played[away] < 10 else 25
+        # 预期胜率（主队视角）
+        rating_home = elo[home]
+        rating_away = elo[away]
+        exp_home = 1 / (1 + 10 ** ((rating_away - rating_home) / 400))
+        exp_away = 1 - exp_home
+        # 实际结果
+        if hg > ag:
+            actual_home = 1
+            actual_away = 0
+        elif hg == ag:
+            actual_home = 0.5
+            actual_away = 0.5
+        else:
+            actual_home = 0
+            actual_away = 1
+        # 更新评分
+        elo[home] = rating_home + k_home * (actual_home - exp_home)
+        elo[away] = rating_away + k_away * (actual_away - exp_away)
+        games_played[home] += 1
+        games_played[away] += 1
+    return elo
+
+def elo_probabilities(home_elo, away_elo, home_adv=65):
+    """
+    根据 ELO 差计算主胜/平/客胜概率。
+    平局概率动态：差值越小平局概率越高，差值越大平局概率越低（15%~35%）。
+    """
+    diff = home_elo + home_adv - away_elo
+    # 动态平局概率
+    draw_prob = 0.28 * (1 - abs(diff) / 500)
+    draw_prob = max(0.15, min(0.35, draw_prob))
+    # 主队预期胜率（不含平局）
+    expected_home_win = 1 / (1 + 10 ** (-diff / 400))
+    # 剩余概率分配给主胜和客胜
+    remaining = 1 - draw_prob
+    home_win = expected_home_win * remaining
+    away_win = (1 - expected_home_win) * remaining
+    # 归一化
+    total = home_win + draw_prob + away_win
+    return home_win/total, draw_prob/total, away_win/total
+
 def find_odds(odds_df, home_en, away_en):
     """在赔率数据中查找匹配的比赛，返回 (odds_home, odds_draw, odds_away) 或 None"""
     if odds_df.empty:
         return None
-    # 先尝试完全匹配
     match = odds_df[(odds_df["home_team"] == home_en) & (odds_df["away_team"] == away_en)]
     if not match.empty:
         row = match.iloc[0]
         return row["odds_home"], row["odds_draw"], row["odds_away"]
-    # 尝试包含匹配（处理名称差异，如 "Manchester City" vs "Manchester City FC"）
     for _, row in odds_df.iterrows():
         if (home_en.lower() in row["home_team"].lower() or row["home_team"].lower() in home_en.lower()) and \
            (away_en.lower() in row["away_team"].lower() or row["away_team"].lower() in away_en.lower()):
@@ -270,6 +330,9 @@ def generate_report():
     if os.path.exists("data/odds.csv"):
         odds_df = pd.read_csv("data/odds.csv")
     
+    # 计算 ELO 评分
+    elo_dict = calculate_elo(df)
+    
     all_upcoming = []
     for league in LEAGUES:
         matches = get_upcoming_matches(league, days_ahead=3)
@@ -280,8 +343,8 @@ def generate_report():
     
     report = "# 足球预测报告（多联赛）\n\n"
     report += f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}（北京时间）\n\n"
-    report += f"数据来源：Football-Data.org + The Odds API\n\n"
-    report += f"模型说明：泊松分布模型，基于历史 100 天数据训练，平滑因子 10\n\n"
+    report += f"数据来源：Football-Data.org + The Odds API + ELO\n\n"
+    report += f"模型说明：泊松模型（权重0.4）+ 市场赔率（权重0.4）+ ELO（权重0.2）融合；ELO平局概率动态化\n\n"
     report += f"共 {len(all_upcoming)} 场比赛\n\n---\n\n"
     
     match_counter = 1
@@ -312,7 +375,42 @@ def generate_report():
                 print(f"计算 {home_en} vs {away_en} 出错：{e}")
                 lh, la = 1.5, 1.2
             
-            probs = match_probabilities(lh, la)
+            # 泊松概率
+            poisson_probs = match_probabilities(lh, la)
+            p_poisson = [poisson_probs["home_win"], poisson_probs["draw"], poisson_probs["away_win"]]
+            
+            # 市场概率（已除水）
+            odds_data = find_odds(odds_df, home_en, away_en)
+            if odds_data:
+                odds_home, odds_draw, odds_away = odds_data
+                raw_probs = [1/odds_home, 1/odds_draw, 1/odds_away]
+                total_raw = sum(raw_probs)
+                p_market = [p / total_raw for p in raw_probs]
+            else:
+                p_market = None
+            
+            # ELO 概率
+            home_elo = elo_dict.get(home_en, 1500)
+            away_elo = elo_dict.get(away_en, 1500)
+            p_elo = elo_probabilities(home_elo, away_elo)
+            
+            # 融合（线性加权，权重可调）
+            if p_market:
+                weights = [0.4, 0.4, 0.2]
+                final_probs = (
+                    weights[0] * np.array(p_poisson) +
+                    weights[1] * np.array(p_market) +
+                    weights[2] * np.array(p_elo)
+                )
+            else:
+                # 无市场数据时：泊松 0.6，ELO 0.2，并归一化
+                weights_no_market = [0.6, 0.2]
+                final_probs = (
+                    weights_no_market[0] * np.array(p_poisson) +
+                    weights_no_market[1] * np.array(p_elo)
+                )
+                final_probs /= weights_no_market[0] + weights_no_market[1]
+            final_probs /= final_probs.sum()  # 最终归一化
             
             match_no = f"{match_counter:03d}"
             match_counter += 1
@@ -321,44 +419,45 @@ def generate_report():
             report += f"- 联赛：{league_name}\n"
             report += f"- 时间：{match_time}\n"
             report += f"- 期望进球：主 {lh:.2f}，客 {la:.2f}\n\n"
-            report += f"**胜平负概率（模型）**\n"
-            report += f"| 主胜 | 平局 | 客胜 |\n|---|---|---|\n"
-            report += f"| {probs['home_win']:.1%} | {probs['draw']:.1%} | {probs['away_win']:.1%} |\n\n"
             
-            # 赔率部分
-            odds_data = find_odds(odds_df, home_en, away_en)
-            if odds_data:
-                odds_home, odds_draw, odds_away = odds_data
-                # 计算隐含概率（去 margin）
-                total_inv = 1/odds_home + 1/odds_draw + 1/odds_away
-                implied_home = (1/odds_home) / total_inv
-                implied_draw = (1/odds_draw) / total_inv
-                implied_away = (1/odds_away) / total_inv
-                report += f"**赔率及隐含概率（市场）**\n"
-                report += f"| 主胜赔率 | 平局赔率 | 客胜赔率 |\n|---|---|---|\n"
-                report += f"| {odds_home:.2f} | {odds_draw:.2f} | {odds_away:.2f} |\n\n"
-                report += f"| 主胜隐含 | 平局隐含 | 客胜隐含 |\n|---|---|---|\n"
-                report += f"| {implied_home:.1%} | {implied_draw:.1%} | {implied_away:.1%} |\n\n"
+            report += f"**各模型概率**\n\n"
+            report += f"| 模型 | 主胜 | 平局 | 客胜 |\n|---|---:|---:|---:|\n"
+            report += f"| 泊松 | {p_poisson[0]:.1%} | {p_poisson[1]:.1%} | {p_poisson[2]:.1%} |\n"
+            if p_market:
+                report += f"| 市场 | {p_market[0]:.1%} | {p_market[1]:.1%} | {p_market[2]:.1%} |\n"
             else:
-                report += f"**赔率数据**：未匹配到\n\n"
+                report += f"| 市场 | 未匹配 | 未匹配 | 未匹配 |\n"
+            report += f"| ELO  | {p_elo[0]:.1%} | {p_elo[1]:.1%} | {p_elo[2]:.1%} |\n\n"
+            
+            report += f"**融合后最终概率**\n"
+            report += f"| 主胜 | 平局 | 客胜 |\n|---|---:|---:|\n"
+            report += f"| {final_probs[0]:.1%} | {final_probs[1]:.1%} | {final_probs[2]:.1%} |\n\n"
+            
+            if final_probs[0] >= final_probs[1] and final_probs[0] >= final_probs[2]:
+                rec = "主胜"
+                conf = final_probs[0]
+            elif final_probs[1] >= final_probs[0] and final_probs[1] >= final_probs[2]:
+                rec = "平局"
+                conf = final_probs[1]
+            else:
+                rec = "客胜"
+                conf = final_probs[2]
+            report += f"**推荐方向**：{rec}（置信度 {conf:.1%}）\n\n"
             
             report += f"**比分 Top3**\n"
-            for score, prob in probs['top_scores']:
+            for score, prob in poisson_probs['top_scores']:
                 report += f"- {score}（{prob:.1%}）\n"
             report += "\n"
-            
             report += f"**半全场 Top3**\n"
-            for htft, prob in probs['top_htft']:
+            for htft, prob in poisson_probs['top_htft']:
                 report += f"- {htft}（{prob:.1%}）\n"
             report += "\n"
-            
             report += f"**让球（主让一球）**\n"
-            hw, hd, ha = probs['handicap']
-            report += f"| 让球后主胜 | 让球后平局 | 让球后客胜 |\n|---|---|---|\n"
+            hw, hd, ha = poisson_probs['handicap']
+            report += f"| 让球后主胜 | 让球后平局 | 让球后客胜 |\n|---|---:|---:|\n"
             report += f"| {hw:.1%} | {hd:.1%} | {ha:.1%} |\n\n"
-            
             report += f"**总进球分布**\n"
-            for total, prob in probs['total_goals'][:5]:
+            for total, prob in poisson_probs['total_goals'][:5]:
                 report += f"- {total}球：{prob:.1%}  "
             report += "\n\n---\n\n"
     
