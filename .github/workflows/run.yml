@@ -1,34 +1,48 @@
 name: Football Analysis
 on:
   schedule:
-    - cron: '0 6 * * *'
-  workflow_dispatch:
+    - cron: '0 6 * * *'   # 每天 UTC 6:00（北京时间 14:00）自动运行
+  workflow_dispatch:      # 允许手动触发
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Fetch data
-        env:
-          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
-          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-        run: python fetch_data.py
+
       - name: Backtest previous predictions
         run: python backtest.py
-      - name: Generate new predictions
+
+      # ===== 临时步骤：初始化历史数据（运行一次后可删除） =====
+      - name: 初始化历史数据
+        run: python init_history.py
+      # ======================================================
+
+      - name: Fetch latest odds
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: python fetch_data.py
+
+      - name: Train and evaluate model
+        run: python train_model.py
+
+      - name: Generate predictions and report
         env:
           FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
         run: python predict_report.py
+
       - name: Commit changes
         run: |
-          git config --global user.name 'github-actions'
-          git config --global user.email 'actions@github.com'
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add data/ model/ docs/
           git commit -m 'Daily update' || echo "No changes"
           git push
