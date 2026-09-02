@@ -15,7 +15,7 @@ def load_data():
 def train_poisson(df, home_team, away_team):
     """
     训练泊松模型，返回 lambda_home 和 lambda_away。
-    使用动态贝叶斯平滑，避免小样本球队因子极端。
+    使用动态贝叶斯平滑，避免小样本极端值。
     """
     if df.empty:
         return 1.5, 1.2
@@ -26,25 +26,23 @@ def train_poisson(df, home_team, away_team):
 
     home_matches = df[df["home_team"] == home_team]
     away_matches = df[df["away_team"] == away_team]
-    
+
+    # 原始攻防因子（正确版本）
     if len(home_matches) > 0:
-        home_attack_raw = home_matches["home_goals"].mean()
+        home_attack_raw = home_matches["home_goals"].mean()  # 主队主场进球
+        home_def_raw = home_matches["away_goals"].mean()     # 主队主场失球（客队进球）
     else:
         home_attack_raw = avg_goals
-    if len(home_matches) > 0:
-        home_def_raw = home_matches["away_goals"].mean()
-    else:
         home_def_raw = avg_goals
+
     if len(away_matches) > 0:
-        away_attack_raw = away_matches["away_goals"].mean()
+        away_attack_raw = away_matches["away_goals"].mean()  # 客队客场进球
+        away_def_raw = away_matches["home_goals"].mean()     # 客队客场失球（主队进球）
     else:
         away_attack_raw = avg_goals
-    if len(away_matches) > 0:
-        away_def_raw = away_matches["home_goals"].mean()
-    else:
         away_def_raw = avg_goals
 
-    # 动态平滑系数
+    # 动态平滑系数：比赛场次越少，收缩越强
     def dynamic_smoothing(games_count):
         if games_count <= 5:
             return 20.0
@@ -61,11 +59,13 @@ def train_poisson(df, home_team, away_team):
     weight_home = home_games_count / (home_games_count + smoothing_home)
     weight_away = away_games_count / (away_games_count + smoothing_away)
 
+    # 贝叶斯平滑：向联赛均值（1.0）收缩
     home_attack = (home_attack_raw / avg_goals) * weight_home + 1.0 * (1 - weight_home)
     home_def    = (home_def_raw / avg_goals) * weight_home + 1.0 * (1 - weight_home)
     away_attack = (away_attack_raw / avg_goals) * weight_away + 1.0 * (1 - weight_away)
     away_def    = (away_def_raw / avg_goals) * weight_away + 1.0 * (1 - weight_away)
 
+    # 限制因子范围，防止极端值
     home_attack = np.clip(home_attack, 0.3, 3.0)
     home_def    = np.clip(home_def, 0.3, 3.0)
     away_attack = np.clip(away_attack, 0.3, 3.0)
