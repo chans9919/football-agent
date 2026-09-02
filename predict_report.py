@@ -178,6 +178,12 @@ def poisson_prob_matrix(lambda_home, lambda_away, max_goals=8):
     for i in range(max_goals+1):
         for j in range(max_goals+1):
             matrix[i,j] = poisson.pmf(i, lambda_home) * poisson.pmf(j, lambda_away)
+    # Dixon-Coles 简化修正：提高低比分概率
+    dc_scores = [(0,0), (1,0), (0,1), (1,1)]
+    dc_factor = 1.15
+    for i, j in dc_scores:
+        if i < matrix.shape[0] and j < matrix.shape[1]:
+            matrix[i, j] *= dc_factor
     matrix /= matrix.sum()
     return matrix
 
@@ -244,8 +250,33 @@ def match_probabilities(lambda_home, lambda_away):
         "total_goals": sorted_total
     }
 
-def calculate_elo(df, initial=1500):
-    """根据历史比赛数据计算每支球队的当前 ELO 评分。K 因子自适应。"""
+def get_initial_elo(team_name):
+    top_teams = {
+        "Manchester City FC": 1800,
+        "Arsenal FC": 1750,
+        "Liverpool FC": 1780,
+        "Chelsea FC": 1700,
+        "Manchester United FC": 1720,
+        "Real Madrid CF": 1850,
+        "FC Barcelona": 1830,
+        "FC Bayern München": 1820,
+        "Juventus FC": 1750,
+        "Paris Saint-Germain FC": 1780,
+    }
+    weak_teams = {
+        "Luton Town FC": 1400,
+        "Burnley FC": 1420,
+        "Sheffield United FC": 1380,
+    }
+    if team_name in top_teams:
+        return top_teams[team_name]
+    elif team_name in weak_teams:
+        return weak_teams[team_name]
+    else:
+        return 1500
+
+def calculate_elo(df):
+    """根据历史比赛数据计算每支球队的当前 ELO 评分。K 因子自适应，初始分分层。"""
     elo = {}
     games_played = {}
     df = df.sort_values("date")
@@ -255,10 +286,10 @@ def calculate_elo(df, initial=1500):
         hg = row["home_goals"]
         ag = row["away_goals"]
         if home not in elo:
-            elo[home] = initial
+            elo[home] = get_initial_elo(home)
             games_played[home] = 0
         if away not in elo:
-            elo[away] = initial
+            elo[away] = get_initial_elo(away)
             games_played[away] = 0
         k_home = 40 if games_played[home] < 10 else 25
         k_away = 40 if games_played[away] < 10 else 25
@@ -308,12 +339,10 @@ def find_odds(odds_df, home_en, away_en):
     return None
 
 def generate_match_id(date_str, home_team, away_team):
-    """生成唯一 match_id：日期 + 标准化主队名 + 标准化客队名"""
     def normalize(name):
         return name.lower().replace(" ", "_").replace(".", "").replace("-", "_")
     return f"{date_str}_{normalize(home_team)}_{normalize(away_team)}"
 
-# ================== 主报告生成函数 ==================
 def generate_report():
     if not os.path.exists("data/matches.csv"):
         return "没有历史数据文件 data/matches.csv"
@@ -335,11 +364,11 @@ def generate_report():
     report = "# 足球预测报告（多联赛）\n\n"
     report += f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}（北京时间）\n\n"
     report += f"数据来源：Football-Data.org + The Odds API + ELO\n\n"
-    report += f"模型说明：泊松模型（权重0.4）+ 市场赔率（权重0.4）+ ELO（权重0.2）融合；ELO平局概率动态化\n\n"
+    report += f"模型说明：泊松模型（权重0.4）+ 市场赔率（权重0.4）+ ELO（权重0.2）融合；ELO平局概率动态化；DC修正\n\n"
     report += f"共 {len(all_upcoming)} 场比赛\n\n---\n\n"
     
     match_counter = 1
-    predictions = []  # 用于存储结构化预测结果
+    predictions = []
     
     for league in LEAGUES:
         league_matches = [m for m in all_upcoming if m["league"] == league]
@@ -358,7 +387,6 @@ def generate_report():
             except:
                 match_time = match["date"]
             
-            # 从历史数据中筛选该联赛
             league_df = df[df["league"] == league]
             if league_df.empty:
                 league_df = df
@@ -368,11 +396,9 @@ def generate_report():
                 print(f"计算 {home_en} vs {away_en} 出错：{e}")
                 lh, la = 1.5, 1.2
             
-            # 泊松概率
             poisson_probs = match_probabilities(lh, la)
             p_poisson = [poisson_probs["home_win"], poisson_probs["draw"], poisson_probs["away_win"]]
             
-            # 市场概率（已除水）
             odds_data = find_odds(odds_df, home_en, away_en)
             if odds_data:
                 odds_home, odds_draw, odds_away = odds_data
@@ -382,12 +408,10 @@ def generate_report():
             else:
                 p_market = None
             
-            # ELO 概率
             home_elo = elo_dict.get(home_en, 1500)
             away_elo = elo_dict.get(away_en, 1500)
             p_elo = elo_probabilities(home_elo, away_elo)
             
-            # 融合
             if p_market:
                 weights = [0.4, 0.4, 0.2]
                 final_probs = (
@@ -404,7 +428,6 @@ def generate_report():
                 final_probs /= weights_no_market[0] + weights_no_market[1]
             final_probs /= final_probs.sum()
             
-            # 确定推荐方向
             if final_probs[0] >= final_probs[1] and final_probs[0] >= final_probs[2]:
                 pred_direction = "home"
                 conf = final_probs[0]
@@ -415,11 +438,9 @@ def generate_report():
                 pred_direction = "away"
                 conf = final_probs[2]
             
-            # 生成 match_id
             match_date_str = pd.to_datetime(match["date"]).strftime("%Y-%m-%d")
             match_id = generate_match_id(match_date_str, home_en, away_en)
             
-            # 构建预测记录
             record = {
                 "match_id": match_id,
                 "date": match_date_str,
@@ -443,7 +464,6 @@ def generate_report():
             }
             predictions.append(record)
             
-            # ========== 报告写入 ==========
             match_no = f"{match_counter:03d}"
             match_counter += 1
             
@@ -493,20 +513,16 @@ def generate_report():
                 report += f"- {total}球：{prob:.1%}  "
             report += "\n\n---\n\n"
     
-    # ========== 保存预测结果 ==========
     if predictions:
         new_pred_df = pd.DataFrame(predictions)
         os.makedirs("data", exist_ok=True)
-        # 合并旧的历史记录（status = finished）
         if os.path.exists("data/predictions.csv"):
             old_preds = pd.read_csv("data/predictions.csv")
             old_finished = old_preds[old_preds["status"] == "finished"]
             combined = pd.concat([old_finished, new_pred_df], ignore_index=True)
             combined.to_csv("data/predictions.csv", index=False)
-            print(f"已保存 {len(combined)} 条预测记录（含历史已结算 {len(old_finished)} 条）")
         else:
             new_pred_df.to_csv("data/predictions.csv", index=False)
-            print(f"已保存 {len(new_pred_df)} 条预测记录")
     
     os.makedirs("docs", exist_ok=True)
     with open("docs/index.md", "w", encoding="utf-8") as f:
