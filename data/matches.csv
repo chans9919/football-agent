@@ -1,21 +1,98 @@
-home_team,away_team,home_goals,away_goals,date
-Arsenal FC,Coventry City FC,3,0,2026-08-21
-Hull City AFC,Manchester United FC,2,0,2026-08-22
-Ipswich Town FC,Sunderland AFC,2,1,2026-08-22
-Nottingham Forest FC,Leeds United FC,0,1,2026-08-22
-Everton FC,Crystal Palace FC,2,0,2026-08-22
-Brentford FC,Tottenham Hotspur FC,3,0,2026-08-22
-Manchester City FC,AFC Bournemouth,2,1,2026-08-23
-Brighton & Hove Albion FC,Aston Villa FC,4,0,2026-08-23
-Newcastle United FC,Liverpool FC,2,2,2026-08-23
-Fulham FC,Chelsea FC,2,3,2026-08-24
-Crystal Palace FC,Manchester City FC,1,4,2026-08-28
-Liverpool FC,Nottingham Forest FC,2,2,2026-08-29
-AFC Bournemouth,Everton FC,1,1,2026-08-29
-Coventry City FC,Hull City AFC,0,1,2026-08-29
-Tottenham Hotspur FC,Newcastle United FC,0,2,2026-08-29
-Sunderland AFC,Fulham FC,1,0,2026-08-30
-Chelsea FC,Brighton & Hove Albion FC,4,3,2026-08-30
-Leeds United FC,Brentford FC,1,1,2026-08-30
-Manchester United FC,Ipswich Town FC,5,2,2026-08-30
-Aston Villa FC,Arsenal FC,0,1,2026-08-31
+league,home_team,away_team,home_goals,away_goals,date
+PL,Arsenal FC,Coventry City FC,3,0,2026-08-21
+PL,Hull City AFC,Manchester United FC,2,0,2026-08-22
+PL,Ipswich Town FC,Sunderland AFC,2,1,2026-08-22
+PL,Nottingham Forest FC,Leeds United FC,0,1,2026-08-22
+PL,Everton FC,Crystal Palace FC,2,0,2026-08-22
+PL,Brentford FC,Tottenham Hotspur FC,3,0,2026-08-22
+PL,Manchester City FC,AFC Bournemouth,2,1,2026-08-23
+PL,Brighton & Hove Albion FC,Aston Villa FC,4,0,2026-08-23
+PL,Newcastle United FC,Liverpool FC,2,2,2026-08-23
+PL,Fulham FC,Chelsea FC,2,3,2026-08-24
+PL,Crystal Palace FC,Manchester City FC,1,4,2026-08-28
+PL,Liverpool FC,Nottingham Forest FC,2,2,2026-08-29
+PL,AFC Bournemouth,Everton FC,1,1,2026-08-29
+PL,Coventry City FC,Hull City AFC,0,1,2026-08-29
+PL,Tottenham Hotspur FC,Newcastle United FC,0,2,2026-08-29
+PL,Sunderland AFC,Fulham FC,1,0,2026-08-30
+PL,Chelsea FC,Brighton & Hove Albion FC,4,3,2026-08-30
+PL,Leeds United FC,Brentford FC,1,1,2026-08-30
+PL,Manchester United FC,Ipswich Town FC,5,2,2026-08-30
+PL,Aston Villa FC,Arsenal FC,0,1,2026-08-31
+PD,Deportivo Alavés,Getafe CF,3,0,2026-08-15
+PD,Sevilla FC,Rayo Vallecano de Madrid,2,1,2026-08-15
+PD,Real Racing Club de Santander,Villarreal CF,2,2,2026-08-16
+PD,RCD Espanyol de Barcelona,Levante UD,3,0,2026-08-16
+PD,RC Deportivo La Coruña,Elche CF,1,1,2026-08-17
+PD,Club Atlético de Madrid,Málaga CF,2,0,2026-08-19
+PD,Rayo Vallecano de Madrid,Deportivo Alavés,1,1,2026-08-20
+PD,Real Betis Balompié,Real Sociedad de Fútbol,1,0,2026-08-21
+PD,Athletic Club,Sevilla FC,1,3,2026-08-22
+PD,Valencia CF,RC Celta de Vigo,0,0,2026-08-22
+PD,RCD Espanyol de Barcelona,Real Madrid CF,1,2,2026-08-22
+PD,Club Atlético de Madrid,Villarreal CF,2,2,2026-08-23
+PD,Getafe CF,Real Racing Club de Santander,1,0,2026-08-23
+PD,Elche CF,FC Barcelona,0,5,2026-08-23
+PD,CA Osasuna,Levante UD,0,0,2026-08-24
+PD,Málaga CF,RC Deportivo La Coruña,1,1,2026-08-24
+PD,Valencia CF,Real Betis Balompié,0,1,2026-08-25
+PD,Real Madrid CF,Real Sociedad de Fútbol,4,1,2026-08-26
+PD,RC Celta de Vigo,CA Osasuna,1,2,2026-08-27
+PD,FC Barcelona,Athletic Club,2,0,2026-08-27
+PD,Real Racing Club de Santander,Elche CF,3,2,2026-08-28
+PD,Deportivo Alavés,Villarreal CF,1,0,2026-08-28
+PD,Levante UD,Real Betis Balompié,5,2,2026-08-29
+PD,Real Sociedad de Fútbol,RCD Espanyol de Barcelona,2,1,2026-08-29
+PD,Sevilla FC,Club Atlético de Madrid,1,3,2026-08-29
+PD,Real Madrid CF,Málaga CF,4,0,2026-08-30
+PD,RC Deportivo La Coruña,Valencia CF,3,1,2026-08-30
+PD,RC Celta de Vigo,Athletic Club,0,2,2026-08-30
+PD,CA Osasuna,Getafe CF,1,0,2026-08-31
+PD,FC Barcelona,Rayo Vallecano de Madrid,5,2,2026-08-31
+BL1,FC Bayern München,VfB Stuttgart,5,1,2026-08-28
+BL1,RB Leipzig,Borussia Mönchengladbach,3,0,2026-08-29
+BL1,1. FSV Mainz 05,SC Paderborn 07,0,0,2026-08-29
+BL1,1. FC Union Berlin,Eintracht Frankfurt,3,3,2026-08-29
+BL1,SV 07 Elversberg,Bayer 04 Leverkusen,3,2,2026-08-29
+BL1,1. FC Köln,TSG 1899 Hoffenheim,3,2,2026-08-29
+BL1,Borussia Dortmund,Hamburger SV,2,0,2026-08-29
+BL1,SC Freiburg,SV Werder Bremen,4,1,2026-08-30
+BL1,FC Augsburg,FC Schalke 04,3,0,2026-08-30
+SA,Udinese Calcio,Como 1907,1,1,2026-08-22
+SA,FC Internazionale Milano,AC Monza,4,1,2026-08-22
+SA,Genoa CFC,SSC Napoli,0,2,2026-08-22
+SA,Parma Calcio 1913,Cagliari Calcio,0,1,2026-08-22
+SA,Frosinone Calcio,Juventus FC,0,1,2026-08-23
+SA,Venezia FC,US Lecce,0,2,2026-08-23
+SA,Atalanta BC,US Sassuolo Calcio,2,1,2026-08-23
+SA,Torino FC,AC Milan,1,2,2026-08-23
+SA,Bologna FC 1909,SS Lazio,0,1,2026-08-24
+SA,AS Roma,ACF Fiorentina,4,0,2026-08-24
+SA,AC Milan,Venezia FC,2,0,2026-08-28
+SA,US Sassuolo Calcio,Torino FC,2,1,2026-08-29
+SA,AC Monza,Udinese Calcio,2,3,2026-08-29
+SA,ACF Fiorentina,Frosinone Calcio,0,3,2026-08-29
+SA,Juventus FC,Parma Calcio 1913,2,0,2026-08-29
+SA,SSC Napoli,Como 1907,1,2,2026-08-30
+SA,SS Lazio,Genoa CFC,1,0,2026-08-30
+SA,Cagliari Calcio,FC Internazionale Milano,0,1,2026-08-30
+SA,US Lecce,AS Roma,0,4,2026-08-31
+SA,Atalanta BC,Bologna FC 1909,1,0,2026-08-31
+FL1,Olympique de Marseille,RC Strasbourg Alsace,4,0,2026-08-21
+FL1,Racing Club de Lens,AJ Auxerre,5,2,2026-08-22
+FL1,Le Mans FC,Stade Brestois 29,2,2,2026-08-22
+FL1,ES Troyes AC,Paris FC,0,0,2026-08-22
+FL1,OGC Nice,FC Lorient,0,0,2026-08-22
+FL1,Toulouse FC,Olympique Lyonnais,0,2,2026-08-22
+FL1,Angers SCO,Lille OSC,0,2,2026-08-23
+FL1,Le Havre AC,AS Monaco FC,0,1,2026-08-23
+FL1,Stade Rennais FC 1901,Paris Saint-Germain FC,2,2,2026-08-23
+FL1,Lille OSC,Paris Saint-Germain FC,2,2,2026-08-28
+FL1,RC Strasbourg Alsace,Racing Club de Lens,2,1,2026-08-29
+FL1,FC Lorient,ES Troyes AC,1,2,2026-08-29
+FL1,Olympique Lyonnais,Le Havre AC,1,1,2026-08-29
+FL1,AJ Auxerre,Angers SCO,1,3,2026-08-29
+FL1,Stade Brestois 29,Toulouse FC,2,2,2026-08-29
+FL1,Paris FC,OGC Nice,3,0,2026-08-30
+FL1,Stade Rennais FC 1901,Le Mans FC,3,2,2026-08-30
+FL1,AS Monaco FC,Olympique de Marseille,2,0,2026-08-30
