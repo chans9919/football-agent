@@ -101,19 +101,22 @@ def evaluate_model(df, test_ratio=0.2):
     train_df = df.iloc[:split]
     test_df = df.iloc[split:]
     
-    y_true = []
-    y_pred = []
+    y_true = []   # 存储类别索引：0=主胜，1=平局，2=客胜
+    y_pred = []   # 存储概率向量 [p_home, p_draw, p_away]
+    
     for _, row in test_df.iterrows():
         lh, la = train_poisson(train_df, row["home_team"], row["away_team"])
         ph, pd_, pa = predict_match_prob(lh, la)
         y_pred.append([ph, pd_, pa])
         if row["home_goals"] > row["away_goals"]:
-            y_true.append([1,0,0])
+            y_true.append(0)
         elif row["home_goals"] == row["away_goals"]:
-            y_true.append([0,1,0])
+            y_true.append(1)
         else:
-            y_true.append([0,0,1])
-    return log_loss(y_true, y_pred, labels=[0,1,2])
+            y_true.append(2)
+    
+    # 计算 log loss，不再传入 labels 参数
+    return log_loss(y_true, y_pred)
 
 def save_model_metrics(metrics, path="model/metrics.json"):
     os.makedirs(os.path.dirname(path), exist_ok=True)
