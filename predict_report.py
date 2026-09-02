@@ -136,11 +136,9 @@ TEAM_NAMES_ZH = {
     "FC Metz": "梅斯",
     "RC Lens": "朗斯",
     "Havre AC": "勒阿弗尔",
-    "FC Nantes": "南特",
     "AS Saint-Étienne": "圣埃蒂安",
     "Stade Malherbe Caen": "卡昂",
     "FC Girondins de Bordeaux": "波尔多",
-    "FC Lorient": "洛里昂",
     "ESTAC Troyes": "特鲁瓦",
     "Dijon FCO": "第戎",
 }
@@ -181,70 +179,40 @@ def poisson_prob_matrix(lambda_home, lambda_away, max_goals=8):
     for i in range(max_goals+1):
         for j in range(max_goals+1):
             matrix[i,j] = poisson.pmf(i, lambda_home) * poisson.pmf(j, lambda_away)
-    matrix /= matrix.sum()  # 归一化
+    matrix /= matrix.sum()
     return matrix
 
 def match_probabilities(lambda_home, lambda_away):
-    """返回胜平负概率、比分Top3、半全场Top3、让球概率、总进球分布"""
+    """返回胜平负、比分Top3、半全场Top3、让球概率、总进球分布"""
     matrix = poisson_prob_matrix(lambda_home, lambda_away)
-    # 胜平负
     home_win = np.sum(np.tril(matrix, -1))
     draw = np.sum(np.diag(matrix))
     away_win = np.sum(np.triu(matrix, 1))
-    # 比分Top3
     score_probs = {}
     for i in range(matrix.shape[0]):
         for j in range(matrix.shape[1]):
             score_probs[f"{i}-{j}"] = matrix[i,j]
     top_scores = sorted(score_probs.items(), key=lambda x: x[1], reverse=True)[:3]
-    # 半全场：上半场（前45分钟）可近似为全场的一半时间，lambda 减半
-    lambda_half_home = lambda_home * 0.45  # 45/90
+    # 半全场（简化独立）
+    lambda_half_home = lambda_home * 0.45
     lambda_half_away = lambda_away * 0.45
     half_matrix = poisson_prob_matrix(lambda_half_home, lambda_half_away, max_goals=4)
     ht_home = np.sum(np.tril(half_matrix, -1))
     ht_draw = np.sum(np.diag(half_matrix))
     ht_away = np.sum(np.triu(half_matrix, 1))
-    # 半全场组合概率（简化：假设半场和全场独立，实际可更精确，但暂用独立近似）
-    ft_home = home_win
-    ft_draw = draw
-    ft_away = away_win
     htft_probs = {
-        "胜胜": ht_home * ft_home,
-        "胜平": ht_home * ft_draw,
-        "胜负": ht_home * ft_away,
-        "平胜": ht_draw * ft_home,
-        "平平": ht_draw * ft_draw,
-        "平负": ht_draw * ft_away,
-        "负胜": ht_away * ft_home,
-        "负平": ht_away * ft_draw,
-        "负负": ht_away * ft_away,
+        "胜胜": ht_home * home_win,
+        "胜平": ht_home * draw,
+        "胜负": ht_home * away_win,
+        "平胜": ht_draw * home_win,
+        "平平": ht_draw * draw,
+        "平负": ht_draw * away_win,
+        "负胜": ht_away * home_win,
+        "负平": ht_away * draw,
+        "负负": ht_away * away_win,
     }
     top_htft = sorted(htft_probs.items(), key=lambda x: x[1], reverse=True)[:3]
-    # 让球（主让一球 -1）：即主队进球-1后与客队比较
-    # 重新计算让球后的胜平负
-    matrix_handicap = np.zeros_like(matrix)
-    for i in range(matrix.shape[0]):
-        for j in range(matrix.shape[1]):
-            # 主队让1球：主队实际进球i，视为i-1
-            new_i = i - 1
-            if new_i < 0:
-                new_i = -1  # 表示主队落后1球以上
-            # 简单处理：用原始矩阵，判断新比分
-            if new_i == -1:
-                # 主队相当于-1，必定客胜
-                if j >= 0:
-                    matrix_handicap[i,j] = matrix[i,j]  # 客胜
-            else:
-                if new_i > j:
-                    # 主胜（让球后）
-                    matrix_handicap[i,j] = matrix[i,j]
-                elif new_i == j:
-                    # 平局
-                    matrix_handicap[i,j] = matrix[i,j]
-                else:
-                    # 客胜
-                    matrix_handicap[i,j] = matrix[i,j]
-    # 重新归类
+    # 让球（主让一球）
     handicap_home_win = 0
     handicap_draw = 0
     handicap_away_win = 0
@@ -267,7 +235,6 @@ def match_probabilities(lambda_home, lambda_away):
             total = i + j
             total_goals[total] = total_goals.get(total, 0) + matrix[i,j]
     sorted_total = sorted(total_goals.items(), key=lambda x: x[0])
-    
     return {
         "home_win": home_win,
         "draw": draw,
@@ -278,10 +245,30 @@ def match_probabilities(lambda_home, lambda_away):
         "total_goals": sorted_total
     }
 
+def find_odds(odds_df, home_en, away_en):
+    """在赔率数据中查找匹配的比赛，返回 (odds_home, odds_draw, odds_away) 或 None"""
+    if odds_df.empty:
+        return None
+    # 先尝试完全匹配
+    match = odds_df[(odds_df["home_team"] == home_en) & (odds_df["away_team"] == away_en)]
+    if not match.empty:
+        row = match.iloc[0]
+        return row["odds_home"], row["odds_draw"], row["odds_away"]
+    # 尝试包含匹配（处理名称差异，如 "Manchester City" vs "Manchester City FC"）
+    for _, row in odds_df.iterrows():
+        if (home_en.lower() in row["home_team"].lower() or row["home_team"].lower() in home_en.lower()) and \
+           (away_en.lower() in row["away_team"].lower() or row["away_team"].lower() in away_en.lower()):
+            return row["odds_home"], row["odds_draw"], row["odds_away"]
+    return None
+
 def generate_report():
     if not os.path.exists("data/matches.csv"):
         return "没有历史数据文件 data/matches.csv"
     df = pd.read_csv("data/matches.csv")
+    # 读取赔率数据
+    odds_df = pd.DataFrame()
+    if os.path.exists("data/odds.csv"):
+        odds_df = pd.read_csv("data/odds.csv")
     
     all_upcoming = []
     for league in LEAGUES:
@@ -293,11 +280,10 @@ def generate_report():
     
     report = "# 足球预测报告（多联赛）\n\n"
     report += f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}（北京时间）\n\n"
-    report += f"数据来源：Football-Data.org 免费 API\n\n"
+    report += f"数据来源：Football-Data.org + The Odds API\n\n"
     report += f"模型说明：泊松分布模型，基于历史 100 天数据训练，平滑因子 10\n\n"
     report += f"共 {len(all_upcoming)} 场比赛\n\n---\n\n"
     
-    # 按联赛分组输出，并给每场比赛编号
     match_counter = 1
     for league in LEAGUES:
         league_matches = [m for m in all_upcoming if m["league"] == league]
@@ -311,7 +297,6 @@ def generate_report():
             home_zh = get_team_name_zh(home_en)
             away_zh = get_team_name_zh(away_en)
             
-            # 比赛时间
             try:
                 match_time = pd.to_datetime(match["date"]).tz_convert("Asia/Shanghai").strftime("%Y-%m-%d %H:%M")
             except:
@@ -327,10 +312,8 @@ def generate_report():
                 print(f"计算 {home_en} vs {away_en} 出错：{e}")
                 lh, la = 1.5, 1.2
             
-            # 计算所有概率
             probs = match_probabilities(lh, la)
             
-            # 编号格式：三位数
             match_no = f"{match_counter:03d}"
             match_counter += 1
             
@@ -338,9 +321,26 @@ def generate_report():
             report += f"- 联赛：{league_name}\n"
             report += f"- 时间：{match_time}\n"
             report += f"- 期望进球：主 {lh:.2f}，客 {la:.2f}\n\n"
-            report += f"**胜平负概率**\n"
+            report += f"**胜平负概率（模型）**\n"
             report += f"| 主胜 | 平局 | 客胜 |\n|---|---|---|\n"
             report += f"| {probs['home_win']:.1%} | {probs['draw']:.1%} | {probs['away_win']:.1%} |\n\n"
+            
+            # 赔率部分
+            odds_data = find_odds(odds_df, home_en, away_en)
+            if odds_data:
+                odds_home, odds_draw, odds_away = odds_data
+                # 计算隐含概率（去 margin）
+                total_inv = 1/odds_home + 1/odds_draw + 1/odds_away
+                implied_home = (1/odds_home) / total_inv
+                implied_draw = (1/odds_draw) / total_inv
+                implied_away = (1/odds_away) / total_inv
+                report += f"**赔率及隐含概率（市场）**\n"
+                report += f"| 主胜赔率 | 平局赔率 | 客胜赔率 |\n|---|---|---|\n"
+                report += f"| {odds_home:.2f} | {odds_draw:.2f} | {odds_away:.2f} |\n\n"
+                report += f"| 主胜隐含 | 平局隐含 | 客胜隐含 |\n|---|---|---|\n"
+                report += f"| {implied_home:.1%} | {implied_draw:.1%} | {implied_away:.1%} |\n\n"
+            else:
+                report += f"**赔率数据**：未匹配到\n\n"
             
             report += f"**比分 Top3**\n"
             for score, prob in probs['top_scores']:
