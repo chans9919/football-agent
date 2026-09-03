@@ -6,10 +6,13 @@ TEAM_NAME_MAP = {
     "Liverpool": "Liverpool FC",
     "Ipswich": "Ipswich Town FC",
     "Man City": "Manchester City FC",
+    "Manchester City": "Manchester City FC",
     "Man United": "Manchester United FC",
+    "Manchester United": "Manchester United FC",
     "Arsenal": "Arsenal FC",
     "Chelsea": "Chelsea FC",
     "Tottenham": "Tottenham Hotspur FC",
+    "Spurs": "Tottenham Hotspur FC",
     "Aston Villa": "Aston Villa FC",
     "Newcastle": "Newcastle United FC",
     "Brighton": "Brighton & Hove Albion FC",
@@ -18,6 +21,7 @@ TEAM_NAME_MAP = {
     "Crystal Palace": "Crystal Palace FC",
     "Everton": "Everton FC",
     "Nott'm Forest": "Nottingham Forest FC",
+    "Nottingham Forest": "Nottingham Forest FC",
     "Fulham": "Fulham FC",
     "Bournemouth": "AFC Bournemouth",
     "Wolves": "Wolverhampton Wanderers FC",
@@ -27,6 +31,7 @@ TEAM_NAME_MAP = {
     "Leicester": "Leicester City FC",
     "Southampton": "Southampton FC",
     "Leeds": "Leeds United FC",
+
     # 西甲
     "Real Madrid": "Real Madrid CF",
     "Barcelona": "FC Barcelona",
@@ -50,6 +55,7 @@ TEAM_NAME_MAP = {
     "Alaves": "Deportivo Alavés",
     "Las Palmas": "UD Las Palmas",
     "Leganes": "CD Leganés",
+
     # 德甲
     "Bayern Munich": "FC Bayern München",
     "Dortmund": "Borussia Dortmund",
@@ -73,10 +79,12 @@ TEAM_NAME_MAP = {
     "Darmstadt": "Darmstadt 98",
     "Holstein Kiel": "Holstein Kiel",
     "St Pauli": "FC St. Pauli",
+
     # 意甲
     "Juventus": "Juventus FC",
     "AC Milan": "AC Milan",
     "Inter": "FC Internazionale Milano",
+    "Inter Milan": "FC Internazionale Milano",
     "Napoli": "SSC Napoli",
     "Roma": "AS Roma",
     "Lazio": "SS Lazio",
@@ -97,8 +105,10 @@ TEAM_NAME_MAP = {
     "Parma": "Parma Calcio 1913",
     "Como": "Como 1907",
     "Venezia": "Venezia FC",
+
     # 法甲
     "PSG": "Paris Saint-Germain FC",
+    "Paris SG": "Paris Saint-Germain FC",
     "Marseille": "Olympique de Marseille",
     "Lyon": "Olympique Lyonnais",
     "Monaco": "AS Monaco FC",
@@ -125,10 +135,33 @@ TEAM_NAME_MAP = {
     "Dijon": "Dijon FCO",
 }
 
+
 def normalize_team_name(name):
     """将常见简称或带后缀的名称统一为标准名称"""
+    if not name:
+        return name
+    
+    # ========== 第一步：先做通用清洗（修复问题五） ==========
+    name = name.strip()
+    # 统一标点和空格
+    name = name.replace(".", "").replace("-", " ").replace("  ", " ")
+    
+    # ========== 第二步：精确字典匹配 ==========
     if name in TEAM_NAME_MAP:
         return TEAM_NAME_MAP[name]
-    # 简单清洗：去掉多余空格
-    name = name.strip()
+    
+    # ========== 第三步：大小写不敏感匹配 ==========
+    name_lower = name.lower()
+    for key, value in TEAM_NAME_MAP.items():
+        if key.lower() == name_lower:
+            return value
+    
+    # ========== 第四步：反向匹配（增加长度限制，修复问题二） ==========
+    # 至少4个字符才做反向匹配，避免"FC"、"U"这类短字符串误匹配
+    if len(name_lower) >= 4:
+        for key, value in TEAM_NAME_MAP.items():
+            if name_lower in value.lower():
+                return value
+    
+    # 都匹配不到返回清洗后的原名
     return name
