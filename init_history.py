@@ -2,40 +2,15 @@ import pandas as pd
 import requests
 import os
 from io import StringIO
+from team_config import normalize_team_name
 
 # ========== 可配置项 ==========
 # 需要加载的历史赛季，格式：两位年份拼接，可自行增减赛季
 SEASONS = ["2223", "2324", "2425", "2526"]
 # 数据源地址（GitHub Actions服务器可直接访问）
 BASE_URL = "https://www.football-data.co.uk/mmz4281/{season}/E0.csv"
-
-# 队名统一映射：数据源队名 → 你的标准队名（和实时抓取保持一致）
-TEAM_NAME_MAP = {
-    "Liverpool": "Liverpool FC",
-    "Ipswich": "Ipswich Town FC",
-    "Man City": "Manchester City FC",
-    "Man United": "Manchester United FC",
-    "Arsenal": "Arsenal FC",
-    "Chelsea": "Chelsea FC",
-    "Tottenham": "Tottenham Hotspur FC",
-    "Aston Villa": "Aston Villa FC",
-    "Newcastle": "Newcastle United FC",
-    "Brighton": "Brighton & Hove Albion FC",
-    "West Ham": "West Ham United FC",
-    "Brentford": "Brentford FC",
-    "Crystal Palace": "Crystal Palace FC",
-    "Everton": "Everton FC",
-    "Nott'm Forest": "Nottingham Forest FC",
-    "Fulham": "Fulham FC",
-    "Bournemouth": "AFC Bournemouth",
-    "Wolves": "Wolverhampton Wanderers FC",
-    "Sheffield Utd": "Sheffield United FC",
-    "Burnley": "Burnley FC",
-    "Luton": "Luton Town FC",
-    "Leicester": "Leicester City FC",
-    "Southampton": "Southampton FC",
-    "Leeds": "Leeds United FC",
-}
+# 对应联赛编码
+LEAGUE_CODE = "PL"
 
 # ========== 内部处理函数 ==========
 def download_season(season):
@@ -66,8 +41,11 @@ def process_data(df):
     df["date"] = pd.to_datetime(df["date"], format="%d/%m/%Y").dt.strftime("%Y-%m-%d")
     
     # 统一队名
-    df["home_team"] = df["home_team"].replace(TEAM_NAME_MAP)
-    df["away_team"] = df["away_team"].replace(TEAM_NAME_MAP)
+    df["home_team"] = df["home_team"].apply(normalize_team_name)
+    df["away_team"] = df["away_team"].apply(normalize_team_name)
+    
+    # 增加联赛标识
+    df["league"] = LEAGUE_CODE
     
     # 数据类型校验与清洗
     df["home_goals"] = pd.to_numeric(df["home_goals"], errors="coerce").astype("Int64")
@@ -100,10 +78,13 @@ def main():
     data_path = "data/matches.csv"
     if os.path.exists(data_path):
         existing_df = pd.read_csv(data_path)
+        # 兼容旧数据（没有league字段的补全）
+        if "league" not in existing_df.columns:
+            existing_df["league"] = LEAGUE_CODE
         history_df = pd.concat([existing_df, history_df], ignore_index=True)
-        # 按「日期+主队+客队」去重，保留最新版本
+        # 按「日期+联赛+主队+客队」去重，保留最新版本
         history_df = history_df.drop_duplicates(
-            subset=["date", "home_team", "away_team"], 
+            subset=["date", "league", "home_team", "away_team"], 
             keep="last"
         )
     
