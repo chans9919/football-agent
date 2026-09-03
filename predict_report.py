@@ -12,8 +12,22 @@ from team_config import normalize_team_name
 API_KEY = os.environ.get("FOOTBALL_DATA_API_KEY")
 BASE_URL = "https://api.football-data.org/v4"
 
-# 目标预测日期：默认当天，可通过环境变量 TARGET_DATE 指定（格式 YYYY-MM-DD）
-TARGET_DATE = os.environ.get("TARGET_DATE", datetime.now().strftime("%Y-%m-%d"))
+# ========== 修复：竞彩时间窗口（北京时间 当日17:00 ~ 次日12:00） ==========
+def get_time_window():
+    now_utc = datetime.utcnow()
+    now_bj = now_utc + timedelta(hours=8)
+    
+    # 北京时间今日17:00
+    start_bj = now_bj.replace(hour=17, minute=0, second=0, microsecond=0)
+    # 北京时间次日12:00
+    end_bj = (now_bj + timedelta(days=1)).replace(hour=12, minute=0, second=0, microsecond=0)
+    
+    # 转回UTC用于匹配API时间
+    start_utc = start_bj - timedelta(hours=8)
+    end_utc = end_bj - timedelta(hours=8)
+    return start_utc, end_utc, start_bj.strftime("%Y-%m-%d")
+
+START_UTC, END_UTC, TARGET_DATE_LABEL = get_time_window()
 
 LEAGUES = ["PL", "PD", "BL1", "SA", "FL1"]
 LEAGUE_NAMES = {
@@ -179,11 +193,9 @@ TEAM_NAMES_ZH = {
 
 
 def get_team_name_zh(team_en):
-    """增强版中文名查找：精确匹配→关键词匹配（长度限制防误配）→返回原名"""
     if team_en in TEAM_NAMES_ZH:
         return TEAM_NAMES_ZH[team_en]
     
-    # 关键词模糊匹配：至少8个字符才做模糊匹配，避免短字符串误匹配
     team_lower = team_en.lower()
     if len(team_lower) >= 8:
         for en, zh in TEAM_NAMES_ZH.items():
@@ -193,13 +205,13 @@ def get_team_name_zh(team_en):
     return team_en
 
 
-def get_upcoming_matches(league_code, days_ahead=3):
+def get_upcoming_matches(league_code, days_ahead=2):
     if not API_KEY:
         print(f"⚠️ 未设置FOOTBALL_DATA_API_KEY，跳过{league_code}赛程拉取")
         return []
     headers = {"X-Auth-Token": API_KEY}
-    date_from = datetime.now().strftime("%Y-%m-%d")
-    date_to = (datetime.now() + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
+    date_from = datetime.utcnow().strftime("%Y-%m-%d")
+    date_to = (datetime.utcnow() + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
     url = f"{BASE_URL}/competitions/{league_code}/matches"
     params = {
         "dateFrom": date_from,
@@ -359,7 +371,6 @@ def generate_match_id(date_str, home_team, away_team):
 
 
 def load_or_calculate_elo(league_df, league):
-    """加载ELO，加载失败则当场计算，保底可用"""
     path = f"model/elo_{league}.json"
     if os.path.exists(path):
         with open(path, "r", encoding="utf-8") as f:
@@ -381,7 +392,6 @@ def generate_match_analysis(home_zh, away_zh, lh, la,
                            p_poisson, p_elo, p_market,
                            poisson_probs, home_elo, away_elo,
                            fused_probs, sample_count, data_sufficient):
-    """生成单场详细分析；数据不足时明确标注极低置信度"""
     analysis = "**详细分析**\n\n"
     
     # 1. 实力定位
@@ -422,7 +432,6 @@ def generate_match_analysis(home_zh, away_zh, lh, la,
     analysis += f"  客队客场期望进球 {la:.2f}，"
     analysis += f"{'高于' if la > avg_goal_ref/2 else '低于'}联赛客场平均水平。\n"
     
-    # 样本不足提示
     if sample_count < 5:
         analysis += f"  ⚠️ 球队历史样本较少（{sample_count}场），预测波动风险较高。\n"
     
@@ -507,30 +516,23 @@ def generate_report():
     else:
         print("⚠️ 未找到赔率文件")
 
-    # 拉取未来3天赛事（保证时区覆盖完整）
+    # 拉取未来赛事
     all_upcoming = []
     for league in LEAGUES:
-        matches = get_upcoming_matches(league, days_ahead=3)
+        matches = get_upcoming_matches(league, days_ahead=2)
         all_upcoming.extend(matches)
 
-    # ========== 修复问题一：按目标日期过滤，只保留当天比赛 ==========
+    # 按时间窗口过滤（北京时间当日17点~次日12点）
     all_upcoming = [
         m for m in all_upcoming
-        if pd.to_datetime(m["date"]).strftime("%Y-%m-%d") == TARGET_DATE
+        if START_UTC <= pd.to_datetime(m["date"]).replace(tzinfo=None) <= END_UTC
     ]
 
     if not all_upcoming:
-        print(f"❌ {TARGET_DATE} 无比赛可预测")
+        print(f"❌ {TARGET_DATE_LABEL} 时段内无比赛可预测")
         return
 
-    print(f"📅 {TARGET_DATE} 当日赛事：{len(all_upcoming)} 场")
-
-    report = "# 足球预测报告（多联赛）\n\n"
-    report += f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}（北京时间）\n\n"
-    report += f"预测日期：{TARGET_DATE}\n\n"
-    report += f"数据来源：Football-Data.org + The Odds API + ELO\n\n"
-    report += f"模型说明：泊松模型（DC修正） + 全庄家赔率中位数 + ELO 在 logit 空间融合\n\n"
-    report += f"共 {len(all_upcoming)} 场比赛\n\n---\n\n"
+    print(f"📅 {TARGET_DATE_LABEL} 时段内赛事：{len(all_upcoming)} 场")
 
     match_counter = 1
     predictions = []
@@ -544,7 +546,7 @@ def generate_report():
     else:
         print("⚠️ 历史数据没有league字段，默认全部按英超处理")
 
-    # ========== 修复问题二：提前按联赛缓存ELO和数据，避免重复计算 ==========
+    # 按联赛缓存ELO和数据
     elo_cache = {}
     league_df_cache = {}
     data_sufficient_cache = {}
@@ -558,6 +560,30 @@ def generate_report():
         league_df_cache[league] = league_df
         elo_cache[league] = load_or_calculate_elo(league_df, league)
         data_sufficient_cache[league] = len(league_df) >= 10
+
+    # ========== 修复问题四：动态判断模型描述 ==========
+    has_any_odds = False
+    temp_predictions = []
+    # 先预生成一遍判断有没有赔率
+    for match in all_upcoming:
+        league = match["league"]
+        odds_data = find_odds(odds_df, match["home_team"], match["away_team"])
+        if odds_data:
+            has_any_odds = True
+            break
+    
+    if has_any_odds:
+        model_desc = "泊松模型（DC修正） + 全庄家赔率中位数 + ELO 在 logit 空间融合"
+    else:
+        model_desc = "泊松模型（DC修正） + ELO（本期无赔率数据）"
+
+    # 报告头部
+    report = "# 足球预测报告（多联赛）\n\n"
+    report += f"生成时间：{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}（北京时间）\n\n"
+    report += f"预测时段：{TARGET_DATE_LABEL} 17:00 ~ 次日 12:00\n\n"
+    report += f"数据来源：Football-Data.org + The Odds API + ELO\n\n"
+    report += f"模型说明：{model_desc}\n\n"
+    report += f"共 {len(all_upcoming)} 场比赛\n\n---\n\n"
 
     # 按开赛时间排序
     all_upcoming_sorted = sorted(all_upcoming, key=lambda x: x["date"])
@@ -573,7 +599,11 @@ def generate_report():
         # 按联赛加分隔标题
         if league != current_league:
             current_league = league
-            report += f"\n## {league_name}\n\n"
+            # ========== 修复问题五：联赛级数据不足警告 ==========
+            if data_sufficient:
+                report += f"\n## {league_name}\n\n"
+            else:
+                report += f"\n## {league_name} ⚠️ 数据不足，仅供参考\n\n"
 
         try:
             home_en = match["home_team"]
@@ -661,7 +691,7 @@ def generate_report():
             }
             predictions.append(record)
 
-            # ========== 修复问题三：数据不足时标题加警告标识 ==========
+            # 比赛标题
             match_no = f"{match_counter:03d}"
             match_counter += 1
             if data_sufficient:
