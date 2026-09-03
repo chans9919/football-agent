@@ -1,29 +1,25 @@
 import re
 
 def normalize_team_name(name):
-    """统一五大联赛队名：历史数据短名、API长名、各种变体全部归一到标准名"""
+    """统一五大联赛队名：自动去除前缀后缀，所有变体归一到标准名"""
     name = name.strip()
     
-    # 统一去除后缀、特殊字符
-    name = re.sub(r'\bFC\b', '', name)
-    name = re.sub(r'\bAFC\b', '', name)
-    name = re.sub(r'\bCF\b', '', name)
-    name = re.sub(r'\bSAD\b', '', name)
-    name = re.sub(r'\bSRL\b', '', name)
-    name = re.sub(r'\bUS\b', '', name)
-    name = re.sub(r'\bSS\b', '', name)
-    name = re.sub(r'\b1\.\b', '', name)
-    name = re.sub(r'\b04\b', '', name)
-    name = re.sub(r'\b05\b', '', name)
-    name = re.sub(r'\b07\b', '', name)
-    name = re.sub(r'\b98\b', '', name)
-    name = re.sub(r'\b1909\b', '', name)
-    name = re.sub(r'\b1913\b', '', name)
-    name = re.sub(r'\b1901\b', '', name)
+    # ========== 第一步：去除所有常见前缀 ==========
+    prefixes = [
+        r'\bLOSC\b', r'\bAS\b', r'\bUS\b', r'\bSS\b', r'\bRC\b',
+        r'\bCA\b', r'\bUD\b', r'\bOGC\b', r'\bTSG\b', r'\bSC\b',
+        r'\bSV\b', r'\b1\. FC\b', r'\bFC\b', r'\bAFC\b', r'\bCF\b',
+        r'\bSAD\b', r'\bSRL\b', r'\b04\b', r'\b07\b', r'\b98\b',
+        r'\b1909\b', r'\b1913\b', r'\b1901\b'
+    ]
+    for p in prefixes:
+        name = re.sub(p, '', name)
+    
+    # ========== 第二步：清理特殊字符和空格 ==========
     name = re.sub(r'[^\w\s&]', ' ', name)
     name = re.sub(r'\s+', ' ', name).strip()
     
-    # 五大联赛队名映射（左边各种变体 → 右边标准名，和预测脚本完全对应）
+    # ========== 第三步：核心队名映射（所有变体 → 标准名） ==========
     name_map = {
         # 英超
         "manchester city": "Manchester City FC",
@@ -60,32 +56,25 @@ def normalize_team_name(name):
         "luton": "Luton Town FC",
         "burnley": "Burnley FC",
         "sheffield united": "Sheffield United FC",
-        "sheffield utd": "Sheffield United FC",
         "ipswich town": "Ipswich Town FC",
-        "ipswich": "Ipswich Town FC",
         "coventry city": "Coventry City FC",
-        "coventry": "Coventry City FC",
         "sunderland": "Sunderland AFC",
         "hull city": "Hull City AFC",
-        "hull": "Hull City AFC",
 
         # 西甲
         "real madrid": "Real Madrid CF",
         "barcelona": "FC Barcelona",
         "barca": "FC Barcelona",
         "atletico madrid": "Atlético Madrid",
-        "atl madrid": "Atlético Madrid",
         "sevilla": "Sevilla FC",
         "real sociedad": "Real Sociedad",
         "real betis": "Real Betis Balompié",
         "betis": "Real Betis Balompié",
         "villarreal": "Villarreal CF",
         "valencia": "Valencia CF",
-        "athletic club": "Athletic Club",
         "athletic bilbao": "Athletic Club",
         "osasuna": "CA Osasuna",
         "rayo vallecano": "Rayo Vallecano de Madrid",
-        "rayo": "Rayo Vallecano de Madrid",
         "espanyol": "RCD Espanyol de Barcelona",
         "getafe": "Getafe CF",
         "cadiz": "Cádiz CF",
@@ -100,9 +89,7 @@ def normalize_team_name(name):
         "leganes": "CD Leganés",
         "malaga": "Málaga CF",
         "levante": "Levante UD",
-        "deportivo la coruna": "RC Deportivo La Coruña",
         "la coruna": "RC Deportivo La Coruña",
-        "racing santander": "Real Racing Club de Santander",
         "santander": "Real Racing Club de Santander",
 
         # 德甲
@@ -117,7 +104,6 @@ def normalize_team_name(name):
         "leverkusen": "Bayer 04 Leverkusen",
         "eintracht frankfurt": "Eintracht Frankfurt",
         "frankfurt": "Eintracht Frankfurt",
-        "wolfsburg": "VfL Wolfsburg",
         "wolfsburg": "VfL Wolfsburg",
         "borussia monchengladbach": "Borussia Mönchengladbach",
         "gladbach": "Borussia Mönchengladbach",
@@ -140,10 +126,8 @@ def normalize_team_name(name):
         "holstein kiel": "Holstein Kiel",
         "kiel": "Holstein Kiel",
         "st pauli": "FC St. Pauli",
-        "pauli": "FC St. Pauli",
         "elversberg": "SV 07 Elversberg",
         "paderborn": "SC Paderborn 07",
-        "hamburger sv": "Hamburger SV",
         "hamburg": "Hamburger SV",
 
         # 意甲
@@ -181,7 +165,6 @@ def normalize_team_name(name):
         "lyon": "Olympique Lyonnais",
         "monaco": "AS Monaco FC",
         "lille": "LOSC Lille",
-        "losc lille": "LOSC Lille",
         "rennes": "Stade Rennais FC",
         "nice": "OGC Nice",
         "strasbourg": "RC Strasbourg Alsace",
@@ -211,5 +194,5 @@ def normalize_team_name(name):
     if key in name_map:
         return name_map[key]
     
-    # 兜底：首字母大写返回
+    # 兜底返回
     return name.title()
