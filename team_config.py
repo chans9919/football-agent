@@ -96,6 +96,8 @@ TEAM_NAME_MAP = {
     "RC Deportivo La Coruña": "RC Deportivo La Coruña",
     "Real Racing Club de Santander": "Real Racing Club de Santander",
     # CSV 短名
+    "Celta de Vigo": "RC Celta de Vigo",
+    "Real Sociedad de Futbol": "Real Sociedad",
     "Real Madrid": "Real Madrid CF",
     "Barcelona": "FC Barcelona",
     "Barca": "FC Barcelona",
