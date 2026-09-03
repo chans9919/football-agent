@@ -1,4 +1,5 @@
 name: Football Analysis
+
 on:
   schedule:
     - cron: '0 6 * * *'   # 每天 UTC 6:00（北京时间 14:00）自动运行
@@ -18,27 +19,28 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # ===== 第一步：更新最新赛果（回测前置条件） =====
+      - name: 更新比赛结果与赔率
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+        run: python fetch_data.py
+
+      # ===== 第二步：回测上一轮预测 =====
       - name: Backtest previous predictions
         run: python backtest.py
 
-      # ===== 临时步骤：初始化历史数据（运行一次后可删除） =====
-      - name: 初始化历史数据
-        run: python init_history.py
-      # ======================================================
-
-      - name: Fetch latest odds
-        env:
-          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-        run: python fetch_data.py
-
+      # ===== 第三步：训练与评估模型（基于最新完整数据） =====
       - name: Train and evaluate model
         run: python train_model.py
 
+      # ===== 第四步：生成当日预测 =====
       - name: Generate predictions and report
         env:
           FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
         run: python predict_report.py
 
+      # ===== 第五步：提交所有变更 =====
       - name: Commit changes
         run: |
           git config --global user.name 'github-actions[bot]'
