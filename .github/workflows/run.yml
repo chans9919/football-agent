@@ -18,6 +18,8 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+      - name: 初始化五大联赛历史数据（仅运行一次）
+        run: python init_history.py
 
       # ===== 第一步：更新最新赛果（回测前置条件） =====
       - name: 更新比赛结果与赔率
