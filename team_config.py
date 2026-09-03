@@ -1,167 +1,215 @@
-# team_config.py
-# 统一球队名称映射，所有脚本共用
-
-TEAM_NAME_MAP = {
-    # 英超
-    "Liverpool": "Liverpool FC",
-    "Ipswich": "Ipswich Town FC",
-    "Man City": "Manchester City FC",
-    "Manchester City": "Manchester City FC",
-    "Man United": "Manchester United FC",
-    "Manchester United": "Manchester United FC",
-    "Arsenal": "Arsenal FC",
-    "Chelsea": "Chelsea FC",
-    "Tottenham": "Tottenham Hotspur FC",
-    "Spurs": "Tottenham Hotspur FC",
-    "Aston Villa": "Aston Villa FC",
-    "Newcastle": "Newcastle United FC",
-    "Brighton": "Brighton & Hove Albion FC",
-    "West Ham": "West Ham United FC",
-    "Brentford": "Brentford FC",
-    "Crystal Palace": "Crystal Palace FC",
-    "Everton": "Everton FC",
-    "Nott'm Forest": "Nottingham Forest FC",
-    "Nottingham Forest": "Nottingham Forest FC",
-    "Fulham": "Fulham FC",
-    "Bournemouth": "AFC Bournemouth",
-    "Wolves": "Wolverhampton Wanderers FC",
-    "Sheffield Utd": "Sheffield United FC",
-    "Burnley": "Burnley FC",
-    "Luton": "Luton Town FC",
-    "Leicester": "Leicester City FC",
-    "Southampton": "Southampton FC",
-    "Leeds": "Leeds United FC",
-
-    # 西甲
-    "Real Madrid": "Real Madrid CF",
-    "Barcelona": "FC Barcelona",
-    "Atletico Madrid": "Atlético Madrid",
-    "Sevilla": "Sevilla FC",
-    "Real Sociedad": "Real Sociedad",
-    "Real Betis": "Real Betis",
-    "Villarreal": "Villarreal CF",
-    "Valencia": "Valencia CF",
-    "Athletic Bilbao": "Athletic Club",
-    "Osasuna": "CA Osasuna",
-    "Rayo Vallecano": "Rayo Vallecano",
-    "Espanyol": "RCD Espanyol",
-    "Getafe": "Getafe CF",
-    "Cadiz": "Cádiz CF",
-    "Almeria": "UD Almería",
-    "Granada": "Granada CF",
-    "Celta Vigo": "RC Celta de Vigo",
-    "Mallorca": "RCD Mallorca",
-    "Girona": "Girona FC",
-    "Alaves": "Deportivo Alavés",
-    "Las Palmas": "UD Las Palmas",
-    "Leganes": "CD Leganés",
-
-    # 德甲
-    "Bayern Munich": "FC Bayern München",
-    "Dortmund": "Borussia Dortmund",
-    "RB Leipzig": "RB Leipzig",
-    "Leverkusen": "Bayer 04 Leverkusen",
-    "Frankfurt": "Eintracht Frankfurt",
-    "Wolfsburg": "VfL Wolfsburg",
-    "Gladbach": "Borussia Mönchengladbach",
-    "Mainz": "1. FSV Mainz 05",
-    "Freiburg": "SC Freiburg",
-    "Hoffenheim": "TSG 1899 Hoffenheim",
-    "Union Berlin": "1. FC Union Berlin",
-    "Stuttgart": "VfB Stuttgart",
-    "Augsburg": "FC Augsburg",
-    "Werder Bremen": "SV Werder Bremen",
-    "Koln": "1. FC Köln",
-    "Schalke": "FC Schalke 04",
-    "Hertha Berlin": "Hertha BSC",
-    "Bochum": "VfL Bochum",
-    "Heidenheim": "1. FC Heidenheim",
-    "Darmstadt": "Darmstadt 98",
-    "Holstein Kiel": "Holstein Kiel",
-    "St Pauli": "FC St. Pauli",
-
-    # 意甲
-    "Juventus": "Juventus FC",
-    "AC Milan": "AC Milan",
-    "Inter": "FC Internazionale Milano",
-    "Inter Milan": "FC Internazionale Milano",
-    "Napoli": "SSC Napoli",
-    "Roma": "AS Roma",
-    "Lazio": "SS Lazio",
-    "Atalanta": "Atalanta BC",
-    "Fiorentina": "ACF Fiorentina",
-    "Torino": "Torino FC",
-    "Bologna": "Bologna FC",
-    "Udinese": "Udinese Calcio",
-    "Sassuolo": "US Sassuolo Calcio",
-    "Verona": "Hellas Verona FC",
-    "Lecce": "US Lecce",
-    "Cagliari": "Cagliari Calcio",
-    "Empoli": "Empoli FC",
-    "Genoa": "Genoa CFC",
-    "Salernitana": "US Salernitana",
-    "Frosinone": "Frosinone Calcio",
-    "Monza": "AC Monza",
-    "Parma": "Parma Calcio 1913",
-    "Como": "Como 1907",
-    "Venezia": "Venezia FC",
-
-    # 法甲
-    "PSG": "Paris Saint-Germain FC",
-    "Paris SG": "Paris Saint-Germain FC",
-    "Marseille": "Olympique de Marseille",
-    "Lyon": "Olympique Lyonnais",
-    "Monaco": "AS Monaco FC",
-    "Lille": "LOSC Lille",
-    "Rennes": "Stade Rennais FC",
-    "Nice": "OGC Nice",
-    "Strasbourg": "RC Strasbourg Alsace",
-    "Nantes": "FC Nantes",
-    "Montpellier": "Montpellier HSC",
-    "Brest": "Stade Brestois 29",
-    "Reims": "Stade de Reims",
-    "Lorient": "FC Lorient",
-    "Clermont": "Clermont Foot",
-    "Toulouse": "Toulouse FC",
-    "Auxerre": "AJ Auxerre",
-    "Angers": "Angers SCO",
-    "Metz": "FC Metz",
-    "Lens": "RC Lens",
-    "Le Havre": "Havre AC",
-    "Saint-Etienne": "AS Saint-Étienne",
-    "Caen": "Stade Malherbe Caen",
-    "Bordeaux": "FC Girondins de Bordeaux",
-    "Troyes": "ESTAC Troyes",
-    "Dijon": "Dijon FCO",
-}
-
+import re
 
 def normalize_team_name(name):
-    """将常见简称或带后缀的名称统一为标准名称"""
-    if not name:
-        return name
-    
-    # ========== 第一步：先做通用清洗（修复问题五） ==========
+    """统一五大联赛队名：历史数据短名、API长名、各种变体全部归一到标准名"""
     name = name.strip()
-    # 统一标点和空格
-    name = name.replace(".", "").replace("-", " ").replace("  ", " ")
     
-    # ========== 第二步：精确字典匹配 ==========
-    if name in TEAM_NAME_MAP:
-        return TEAM_NAME_MAP[name]
+    # 统一去除后缀、特殊字符
+    name = re.sub(r'\bFC\b', '', name)
+    name = re.sub(r'\bAFC\b', '', name)
+    name = re.sub(r'\bCF\b', '', name)
+    name = re.sub(r'\bSAD\b', '', name)
+    name = re.sub(r'\bSRL\b', '', name)
+    name = re.sub(r'\bUS\b', '', name)
+    name = re.sub(r'\bSS\b', '', name)
+    name = re.sub(r'\b1\.\b', '', name)
+    name = re.sub(r'\b04\b', '', name)
+    name = re.sub(r'\b05\b', '', name)
+    name = re.sub(r'\b07\b', '', name)
+    name = re.sub(r'\b98\b', '', name)
+    name = re.sub(r'\b1909\b', '', name)
+    name = re.sub(r'\b1913\b', '', name)
+    name = re.sub(r'\b1901\b', '', name)
+    name = re.sub(r'[^\w\s&]', ' ', name)
+    name = re.sub(r'\s+', ' ', name).strip()
     
-    # ========== 第三步：大小写不敏感匹配 ==========
-    name_lower = name.lower()
-    for key, value in TEAM_NAME_MAP.items():
-        if key.lower() == name_lower:
-            return value
+    # 五大联赛队名映射（左边各种变体 → 右边标准名，和预测脚本完全对应）
+    name_map = {
+        # 英超
+        "manchester city": "Manchester City FC",
+        "man city": "Manchester City FC",
+        "arsenal": "Arsenal FC",
+        "liverpool": "Liverpool FC",
+        "chelsea": "Chelsea FC",
+        "manchester united": "Manchester United FC",
+        "man utd": "Manchester United FC",
+        "tottenham hotspur": "Tottenham Hotspur FC",
+        "spurs": "Tottenham Hotspur FC",
+        "newcastle united": "Newcastle United FC",
+        "newcastle": "Newcastle United FC",
+        "brighton hove albion": "Brighton & Hove Albion FC",
+        "brighton": "Brighton & Hove Albion FC",
+        "aston villa": "Aston Villa FC",
+        "west ham united": "West Ham United FC",
+        "west ham": "West Ham United FC",
+        "everton": "Everton FC",
+        "wolverhampton wanderers": "Wolverhampton Wanderers FC",
+        "wolves": "Wolverhampton Wanderers FC",
+        "crystal palace": "Crystal Palace FC",
+        "fulham": "Fulham FC",
+        "brentford": "Brentford FC",
+        "leeds united": "Leeds United FC",
+        "leeds": "Leeds United FC",
+        "leicester city": "Leicester City FC",
+        "leicester": "Leicester City FC",
+        "southampton": "Southampton FC",
+        "nottingham forest": "Nottingham Forest FC",
+        "nottingham": "Nottingham Forest FC",
+        "bournemouth": "AFC Bournemouth",
+        "luton town": "Luton Town FC",
+        "luton": "Luton Town FC",
+        "burnley": "Burnley FC",
+        "sheffield united": "Sheffield United FC",
+        "sheffield utd": "Sheffield United FC",
+        "ipswich town": "Ipswich Town FC",
+        "ipswich": "Ipswich Town FC",
+        "coventry city": "Coventry City FC",
+        "coventry": "Coventry City FC",
+        "sunderland": "Sunderland AFC",
+        "hull city": "Hull City AFC",
+        "hull": "Hull City AFC",
+
+        # 西甲
+        "real madrid": "Real Madrid CF",
+        "barcelona": "FC Barcelona",
+        "barca": "FC Barcelona",
+        "atletico madrid": "Atlético Madrid",
+        "atl madrid": "Atlético Madrid",
+        "sevilla": "Sevilla FC",
+        "real sociedad": "Real Sociedad",
+        "real betis": "Real Betis Balompié",
+        "betis": "Real Betis Balompié",
+        "villarreal": "Villarreal CF",
+        "valencia": "Valencia CF",
+        "athletic club": "Athletic Club",
+        "athletic bilbao": "Athletic Club",
+        "osasuna": "CA Osasuna",
+        "rayo vallecano": "Rayo Vallecano de Madrid",
+        "rayo": "Rayo Vallecano de Madrid",
+        "espanyol": "RCD Espanyol de Barcelona",
+        "getafe": "Getafe CF",
+        "cadiz": "Cádiz CF",
+        "almeria": "UD Almería",
+        "granada": "Granada CF",
+        "celta vigo": "RC Celta de Vigo",
+        "celta": "RC Celta de Vigo",
+        "mallorca": "RCD Mallorca",
+        "girona": "Girona FC",
+        "alaves": "Deportivo Alavés",
+        "las palmas": "UD Las Palmas",
+        "leganes": "CD Leganés",
+        "malaga": "Málaga CF",
+        "levante": "Levante UD",
+        "deportivo la coruna": "RC Deportivo La Coruña",
+        "la coruna": "RC Deportivo La Coruña",
+        "racing santander": "Real Racing Club de Santander",
+        "santander": "Real Racing Club de Santander",
+
+        # 德甲
+        "bayern munchen": "FC Bayern München",
+        "bayern": "FC Bayern München",
+        "borussia dortmund": "Borussia Dortmund",
+        "dortmund": "Borussia Dortmund",
+        "bvb": "Borussia Dortmund",
+        "rb leipzig": "RB Leipzig",
+        "leipzig": "RB Leipzig",
+        "bayer leverkusen": "Bayer 04 Leverkusen",
+        "leverkusen": "Bayer 04 Leverkusen",
+        "eintracht frankfurt": "Eintracht Frankfurt",
+        "frankfurt": "Eintracht Frankfurt",
+        "wolfsburg": "VfL Wolfsburg",
+        "wolfsburg": "VfL Wolfsburg",
+        "borussia monchengladbach": "Borussia Mönchengladbach",
+        "gladbach": "Borussia Mönchengladbach",
+        "mainz": "1. FSV Mainz 05",
+        "freiburg": "SC Freiburg",
+        "hoffenheim": "TSG 1899 Hoffenheim",
+        "union berlin": "1. FC Union Berlin",
+        "stuttgart": "VfB Stuttgart",
+        "augsburg": "FC Augsburg",
+        "werder bremen": "SV Werder Bremen",
+        "bremen": "SV Werder Bremen",
+        "koln": "1. FC Köln",
+        "cologne": "1. FC Köln",
+        "schalke": "FC Schalke 04",
+        "hertha berlin": "Hertha BSC",
+        "hertha": "Hertha BSC",
+        "bochum": "VfL Bochum",
+        "heidenheim": "1. FC Heidenheim",
+        "darmstadt": "Darmstadt 98",
+        "holstein kiel": "Holstein Kiel",
+        "kiel": "Holstein Kiel",
+        "st pauli": "FC St. Pauli",
+        "pauli": "FC St. Pauli",
+        "elversberg": "SV 07 Elversberg",
+        "paderborn": "SC Paderborn 07",
+        "hamburger sv": "Hamburger SV",
+        "hamburg": "Hamburger SV",
+
+        # 意甲
+        "juventus": "Juventus FC",
+        "juve": "Juventus FC",
+        "ac milan": "AC Milan",
+        "milan": "AC Milan",
+        "internazionale": "FC Internazionale Milano",
+        "inter": "FC Internazionale Milano",
+        "napoli": "SSC Napoli",
+        "roma": "AS Roma",
+        "lazio": "SS Lazio",
+        "atalanta": "Atalanta BC",
+        "fiorentina": "ACF Fiorentina",
+        "torino": "Torino FC",
+        "bologna": "Bologna FC 1909",
+        "udinese": "Udinese Calcio",
+        "sassuolo": "US Sassuolo Calcio",
+        "verona": "Hellas Verona FC",
+        "lecce": "US Lecce",
+        "cagliari": "Cagliari Calcio",
+        "empoli": "Empoli FC",
+        "genoa": "Genoa CFC",
+        "salernitana": "US Salernitana",
+        "frosinone": "Frosinone Calcio",
+        "monza": "AC Monza",
+        "parma": "Parma Calcio 1913",
+        "como": "Como 1907",
+        "venezia": "Venezia FC",
+
+        # 法甲
+        "paris saint germain": "Paris Saint-Germain FC",
+        "psg": "Paris Saint-Germain FC",
+        "marseille": "Olympique de Marseille",
+        "lyon": "Olympique Lyonnais",
+        "monaco": "AS Monaco FC",
+        "lille": "LOSC Lille",
+        "losc lille": "LOSC Lille",
+        "rennes": "Stade Rennais FC",
+        "nice": "OGC Nice",
+        "strasbourg": "RC Strasbourg Alsace",
+        "nantes": "FC Nantes",
+        "montpellier": "Montpellier HSC",
+        "brest": "Stade Brestois 29",
+        "reims": "Stade de Reims",
+        "lorient": "FC Lorient",
+        "clermont": "Clermont Foot",
+        "toulouse": "Toulouse FC",
+        "auxerre": "AJ Auxerre",
+        "angers": "Angers SCO",
+        "metz": "FC Metz",
+        "lens": "RC Lens",
+        "le havre": "Le Havre AC",
+        "havre": "Le Havre AC",
+        "saint etienne": "AS Saint-Étienne",
+        "caen": "Stade Malherbe Caen",
+        "bordeaux": "FC Girondins de Bordeaux",
+        "troyes": "ES Troyes AC",
+        "dijon": "Dijon FCO",
+        "le mans": "Le Mans FC",
+        "paris fc": "Paris FC",
+    }
     
-    # ========== 第四步：反向匹配（增加长度限制，修复问题二） ==========
-    # 至少4个字符才做反向匹配，避免"FC"、"U"这类短字符串误匹配
-    if len(name_lower) >= 4:
-        for key, value in TEAM_NAME_MAP.items():
-            if name_lower in value.lower():
-                return value
+    key = name.lower().strip()
+    if key in name_map:
+        return name_map[key]
     
-    # 都匹配不到返回清洗后的原名
-    return name
+    # 兜底：首字母大写返回
+    return name.title()
