@@ -3,6 +3,7 @@ import numpy as np
 import requests
 import os
 import json
+import traceback
 from datetime import datetime, timedelta
 from scipy.stats import poisson
 from train_model import train_poisson, predict_match_prob
@@ -146,6 +147,7 @@ def get_team_name_zh(team_en):
 
 def get_upcoming_matches(league_code, days_ahead=3):
     if not API_KEY:
+        print(f"⚠️ 未设置FOOTBALL_DATA_API_KEY，跳过{league_code}赛程拉取")
         return []
     headers = {"X-Auth-Token": API_KEY}
     date_from = datetime.now().strftime("%Y-%m-%d")
@@ -171,20 +173,19 @@ def get_upcoming_matches(league_code, days_ahead=3):
                 "away_team": away_en,
                 "date": m["utcDate"]
             })
+        print(f"✅ {league_code} 拉取到 {len(upcoming)} 场未来赛事")
         return upcoming
     except Exception as e:
-        print(f"⚠️ 联赛 {league_code} 未来赛事请求失败: {e}")
+        print(f"❌ {league_code} 未来赛事请求失败: {str(e)}")
         return []
 
 
 def poisson_prob_matrix(lambda_home, lambda_away, max_goals=8):
-    """与训练端统一DC修正逻辑，保证评估与预测一致"""
     matrix = np.zeros((max_goals+1, max_goals+1))
     for i in range(max_goals+1):
         for j in range(max_goals+1):
             matrix[i,j] = poisson.pmf(i, lambda_home) * poisson.pmf(j, lambda_away)
     
-    # Dixon-Coles 简化修正
     dc_scores = [(0,0), (1,0), (0,1), (1,1)]
     dc_factor = 1.15
     for i, j in dc_scores:
@@ -207,7 +208,6 @@ def match_probabilities(lambda_home, lambda_away):
             score_probs[f"{i}-{j}"] = matrix[i,j]
     top_scores = sorted(score_probs.items(), key=lambda x: x[1], reverse=True)[:3]
 
-    # 半全场
     lambda_half_home = lambda_home * 0.45
     lambda_half_away = lambda_away * 0.45
     half_matrix = poisson_prob_matrix(lambda_half_home, lambda_half_away, max_goals=4)
@@ -228,7 +228,6 @@ def match_probabilities(lambda_home, lambda_away):
     }
     top_htft = sorted(htft_probs.items(), key=lambda x: x[1], reverse=True)[:3]
 
-    # 让球（主让一球）
     handicap_home_win = 0
     handicap_draw = 0
     handicap_away_win = 0
@@ -280,8 +279,7 @@ def find_odds(odds_df, home_en, away_en):
         return None
     match = odds_df[(odds_df["home_team"] == home_en) & (odds_df["away_team"] == away_en)]
     if not match.empty:
-        row = match.iloc[0]
-        return row["odds_home"], row["odds_draw"], row["odds_away"]
+        return match.iloc[0]["odds_home"], match.iloc[0]["odds_draw"], match.iloc[0]["odds_away"]
     return None
 
 
@@ -317,16 +315,15 @@ def load_elo(league):
     if os.path.exists(path):
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
+    print(f"⚠️ 未找到{league}的ELO模型文件，使用默认值")
     return {}
 
 
 def generate_match_analysis(home_zh, away_zh, lh, la,
                            p_poisson, p_elo, p_market,
                            poisson_probs, home_elo, away_elo):
-    """基于模型数据生成单场比赛详细战术分析"""
     analysis = "**详细分析**\n\n"
     
-    # 1. 实力定位
     elo_diff = home_elo - away_elo
     if abs(elo_diff) >= 150:
         level = "实力差距悬殊"
@@ -341,7 +338,6 @@ def generate_match_analysis(home_zh, away_zh, lh, la,
     analysis += f"- **实力定位**：两队{level}，ELO综合评分{adv_team}高出{abs(elo_diff):.0f}分。"
     analysis += f"叠加主场优势后，主队理论实力分差为{elo_diff + 65:.0f}分。\n"
     
-    # 2. 攻防解读
     avg_goal_ref = 2.6
     total_xg = lh + la
     
@@ -358,7 +354,6 @@ def generate_match_analysis(home_zh, away_zh, lh, la,
     analysis += f"  客队客场期望进球 {la:.2f}，"
     analysis += f"{'高于' if la > avg_goal_ref/2 else '低于'}联赛客场平均水平。\n"
     
-    # 3. 模型一致性
     analysis += "- **模型一致性**："
     directions = []
     
@@ -379,7 +374,6 @@ def generate_match_analysis(home_zh, away_zh, lh, la,
         dir_detail = "、".join([f"{name}看{dir_map[d]}" for name, d in directions])
         analysis += f"模型存在一定分歧：{dir_detail}，融合后取折中结果。\n"
     
-    # 4. 比分与进球逻辑
     top_score, top_prob = poisson_probs["top_scores"][0]
     peak_goals = max(poisson_probs["total_goals"], key=lambda x: x[1])[0]
     
@@ -388,7 +382,6 @@ def generate_match_analysis(home_zh, away_zh, lh, la,
     analysis += f"  Top3比分均集中在{'2球及以内' if peak_goals <= 2 else '2球以上'}，"
     analysis += f"属于{'低比分缠斗' if peak_goals <= 2 else '对攻格局'}。\n"
     
-    # 5. 半全场走势
     top_htft, top_htft_prob = poisson_probs["top_htft"][0]
     analysis += f"- **半全场走势**：最高概率为 {top_htft}（{top_htft_prob:.1%}），"
     if top_htft.startswith("平"):
@@ -396,7 +389,6 @@ def generate_match_analysis(home_zh, away_zh, lh, la,
     else:
         analysis += "上半场大概率分出胜负，开局节奏较快。\n"
     
-    # 6. 让球视角
     hw, hd, ha = poisson_probs["handicap"]
     analysis += "- **让球视角（主让一球）**："
     if ha > 0.5:
@@ -406,7 +398,6 @@ def generate_match_analysis(home_zh, away_zh, lh, la,
     else:
         analysis += f"让球后三项概率接近，走盘风险较高。\n"
     
-    # 7. 置信度与风险提示
     max_prob = max(p_poisson[0], p_poisson[1], p_poisson[2])
     if max_prob >= 0.5:
         confidence = "较高"
@@ -425,13 +416,16 @@ def generate_match_analysis(home_zh, away_zh, lh, la,
 
 def generate_report():
     if not os.path.exists("data/matches.csv"):
-        print("没有历史数据文件")
+        print("❌ 没有找到历史数据文件 data/matches.csv")
         return
 
     # 加载赔率
     odds_df = pd.DataFrame()
     if os.path.exists("data/odds.csv"):
         odds_df = pd.read_csv("data/odds.csv")
+        print(f"📊 加载赔率数据：{len(odds_df)} 条")
+    else:
+        print("⚠️ 未找到赔率文件")
 
     # 加载所有未来比赛
     all_upcoming = []
@@ -440,8 +434,10 @@ def generate_report():
         all_upcoming.extend(matches)
 
     if not all_upcoming:
-        print("未来3天无比赛")
+        print("❌ 未来3天无比赛可预测")
         return
+
+    print(f"📅 总计未来赛事：{len(all_upcoming)} 场")
 
     report = "# 足球预测报告（多联赛）\n\n"
     report += f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}（北京时间）\n\n"
@@ -452,16 +448,35 @@ def generate_report():
     match_counter = 1
     predictions = []
 
+    # 预加载全部历史数据
+    all_matches_df = pd.read_csv("data/matches.csv")
+    print(f"📚 历史数据总场数：{len(all_matches_df)}")
+    if "league" in all_matches_df.columns:
+        print("🏷️ 历史数据包含league字段，各联赛数量：")
+        print(all_matches_df["league"].value_counts().to_string())
+    else:
+        print("⚠️ 历史数据没有league字段，默认全部按英超处理")
+
     for league in LEAGUES:
         league_matches = [m for m in all_upcoming if m["league"] == league]
         if not league_matches:
             continue
 
-        # 加载该联赛的历史数据与模型
-        all_matches_df = pd.read_csv("data/matches.csv")
-        league_df = all_matches_df[all_matches_df["league"] == league].copy() if "league" in all_matches_df.columns else pd.DataFrame()
-        if len(league_df) < 50:
-            print(f"⏭️ {league} 历史数据不足，跳过预测")
+        # ========== 修复：联赛数据筛选逻辑加固 ==========
+        if "league" not in all_matches_df.columns:
+            # 旧版无league字段，默认全部为英超
+            if league == "PL":
+                league_df = all_matches_df.copy()
+            else:
+                print(f"⏭️ {league} 无对应历史数据，跳过")
+                continue
+        else:
+            league_df = all_matches_df[all_matches_df["league"] == league].copy()
+            
+        print(f"\n🔹 处理联赛 {league}：赛程{len(league_matches)}场，历史数据{len(league_df)}场")
+        
+        if len(league_df) < 10:  # 降低门槛，先跑通
+            print(f"⏭️ {league} 历史数据不足10场，跳过预测")
             continue
 
         elo_dict = load_elo(league)
@@ -475,7 +490,7 @@ def generate_report():
                 home_zh = get_team_name_zh(home_en)
                 away_zh = get_team_name_zh(away_en)
 
-                # 时区转换修复
+                # 时区转换加固
                 match_dt = pd.to_datetime(match["date"])
                 if match_dt.tzinfo is None:
                     match_dt = match_dt.tz_localize('UTC')
@@ -603,10 +618,13 @@ def generate_report():
                 report += "\n---\n\n"
 
             except Exception as e:
-                print(f"跳过比赛 {match.get('home_team', '?')} vs {match.get('away_team', '?')}: {e}")
+                print(f"❌ 跳过比赛 {home_en} vs {away_en}：{str(e)}")
+                traceback.print_exc()  # 打印完整错误堆栈
                 continue
 
-    # 保存预测记录：全量保留+按ID去重
+    print(f"\n✅ 成功生成 {match_counter-1} 场比赛预测")
+
+    # 保存预测记录
     if predictions:
         new_pred_df = pd.DataFrame(predictions)
         os.makedirs("data", exist_ok=True)
@@ -620,12 +638,12 @@ def generate_report():
             combined = new_pred_df
 
         combined.to_csv(pred_path, index=False)
-        print(f"✅ 预测记录已保存，共 {len(combined)} 条")
+        print(f"💾 预测记录已保存，共 {len(combined)} 条")
 
     os.makedirs("docs", exist_ok=True)
     with open("docs/index.md", "w", encoding="utf-8") as f:
         f.write(report)
-    print(f"📄 报告已生成，共 {len(all_upcoming)} 场比赛")
+    print(f"📄 报告已生成")
 
 
 if __name__ == "__main__":
