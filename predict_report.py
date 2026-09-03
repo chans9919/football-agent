@@ -4,7 +4,7 @@ import requests
 import os
 import json
 import traceback
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from scipy.stats import poisson
 from train_model import train_poisson, predict_match_prob, calculate_elo
 from team_config import normalize_team_name
@@ -12,20 +12,33 @@ from team_config import normalize_team_name
 API_KEY = os.environ.get("FOOTBALL_DATA_API_KEY")
 BASE_URL = "https://api.football-data.org/v4"
 
-# ========== 修复：竞彩时间窗口（北京时间 当日17:00 ~ 次日12:00） ==========
+# ========== 修复问题一：竞彩时间窗口（北京时间 当日17:00 ~ 次日12:00） ==========
 def get_time_window():
-    now_utc = datetime.utcnow()
-    now_bj = now_utc + timedelta(hours=8)
+    now_utc = datetime.now(timezone.utc)
+    now_bj = now_utc.astimezone(timezone(timedelta(hours=8)))
     
-    # 北京时间今日17:00
-    start_bj = now_bj.replace(hour=17, minute=0, second=0, microsecond=0)
-    # 北京时间次日12:00
-    end_bj = (now_bj + timedelta(days=1)).replace(hour=12, minute=0, second=0, microsecond=0)
+    # 凌晨 0:00~12:00 仍属于前一天的比赛窗口
+    if now_bj.hour < 12:
+        base_date = (now_bj - timedelta(days=1)).date()
+    else:
+        base_date = now_bj.date()
     
-    # 转回UTC用于匹配API时间
-    start_utc = start_bj - timedelta(hours=8)
-    end_utc = end_bj - timedelta(hours=8)
-    return start_utc, end_utc, start_bj.strftime("%Y-%m-%d")
+    # 组合出完整起止时间（北京时间）
+    start_bj = datetime.combine(
+        base_date, 
+        datetime.strptime("17:00", "%H:%M").time(),
+        tzinfo=timezone(timedelta(hours=8))
+    )
+    end_bj = datetime.combine(
+        base_date + timedelta(days=1), 
+        datetime.strptime("12:00", "%H:%M").time(),
+        tzinfo=timezone(timedelta(hours=8))
+    )
+    
+    # 转回UTC用于匹配API时间（统一为无时区的datetime对象进行比较）
+    start_utc = start_bj.astimezone(timezone.utc).replace(tzinfo=None)
+    end_utc = end_bj.astimezone(timezone.utc).replace(tzinfo=None)
+    return start_utc, end_utc, base_date.strftime("%Y-%m-%d")
 
 START_UTC, END_UTC, TARGET_DATE_LABEL = get_time_window()
 
@@ -522,10 +535,10 @@ def generate_report():
         matches = get_upcoming_matches(league, days_ahead=2)
         all_upcoming.extend(matches)
 
-    # 按时间窗口过滤（北京时间当日17点~次日12点）
+    # ========== 修复问题三：显式UTC解析再去时区，安全比较 ==========
     all_upcoming = [
         m for m in all_upcoming
-        if START_UTC <= pd.to_datetime(m["date"]).replace(tzinfo=None) <= END_UTC
+        if START_UTC <= pd.to_datetime(m["date"], utc=True).tz_localize(None) <= END_UTC
     ]
 
     if not all_upcoming:
@@ -561,12 +574,9 @@ def generate_report():
         elo_cache[league] = load_or_calculate_elo(league_df, league)
         data_sufficient_cache[league] = len(league_df) >= 10
 
-    # ========== 修复问题四：动态判断模型描述 ==========
+    # ========== 修复问题四：删除冗余变量，直接判断是否有赔率 ==========
     has_any_odds = False
-    temp_predictions = []
-    # 先预生成一遍判断有没有赔率
     for match in all_upcoming:
-        league = match["league"]
         odds_data = find_odds(odds_df, match["home_team"], match["away_team"])
         if odds_data:
             has_any_odds = True
@@ -577,9 +587,10 @@ def generate_report():
     else:
         model_desc = "泊松模型（DC修正） + ELO（本期无赔率数据）"
 
-    # 报告头部
+    # ========== 修复问题二：生成时间使用真实北京时间 ==========
+    now_bj = datetime.utcnow() + timedelta(hours=8)
     report = "# 足球预测报告（多联赛）\n\n"
-    report += f"生成时间：{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}（北京时间）\n\n"
+    report += f"生成时间：{now_bj.strftime('%Y-%m-%d %H:%M:%S')}（北京时间）\n\n"
     report += f"预测时段：{TARGET_DATE_LABEL} 17:00 ~ 次日 12:00\n\n"
     report += f"数据来源：Football-Data.org + The Odds API + ELO\n\n"
     report += f"模型说明：{model_desc}\n\n"
@@ -599,7 +610,6 @@ def generate_report():
         # 按联赛加分隔标题
         if league != current_league:
             current_league = league
-            # ========== 修复问题五：联赛级数据不足警告 ==========
             if data_sufficient:
                 report += f"\n## {league_name}\n\n"
             else:
