@@ -67,6 +67,8 @@ TEAM_NAME_MAP = {
 
     # ==================== 西甲 ====================
     # API 全名
+    "Real Sociedad": "Real Sociedad",
+    "Sociedad": "Real Sociedad",       
     "Real Madrid CF": "Real Madrid CF",
     "FC Barcelona": "FC Barcelona",
     "Club Atlético de Madrid": "Atlético Madrid",
