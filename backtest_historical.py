@@ -64,34 +64,30 @@ def main():
                 np.sum(np.diag(matrix)),
                 np.sum(np.triu(matrix, 1))
             ]
-
             # ELO预测
             home_elo = elo_dict.get(home, 1500)
             away_elo = elo_dict.get(away, 1500)
             p_elo = list(elo_probabilities(home_elo, away_elo))
-
-        # 分联赛动态融合权重，和每日预测逻辑一致
-        weights = LEAGUE_WEIGHTS.get(league, [0.5, 0.5])
-        fused = []
-        for i in range(3):
-            logits = [logit(p_poisson[i]), logit(p_elo[i])]
-            fused_val = sum(w * l for w, l in zip(weights, logits))
-            fused.append(inv_logit(fused_val))
-        total = sum(fused)
-        fused = [f / total for f in fused]
-
-
+            # 分联赛动态融合权重，和每日预测逻辑一致
+            weights = LEAGUE_WEIGHTS.get(league, [0.5, 0.5])
+            fused = []
+            for i in range(3):
+                logits = [logit(p_poisson[i]), logit(p_elo[i])]
+                fused_val = sum(w * l for w, l in zip(weights, logits))
+                fused.append(inv_logit(fused_val))
+            total = sum(fused)
+            fused = [f / total for f in fused]
             y_true.append(true_label)
             y_pred_poisson.append(p_poisson)
             y_pred_elo.append(p_elo)
             y_pred_fused.append(fused)
-
             if np.argmax(p_poisson) == true_label:
                 correct_poisson += 1
             if np.argmax(p_elo) == true_label:
                 correct_elo += 1
             if np.argmax(fused) == true_label:
                 correct_fused += 1
+
 
             # 更新ELO
             k = 30
