@@ -731,7 +731,7 @@ def generate_report():
             report += f"| 主胜 | 平局 | 客胜 |\n|---|---:|---:|\n"
             report += f"| {fused_home:.1%} | {fused_draw:.1%} | {fused_away:.1%} |\n\n"
 
-           rec_zh = {"home": "主胜", "draw": "平局", "away": "客胜"}[pred_direction]
+            rec_zh = {"home": "主胜", "draw": "平局", "away": "客胜"}[pred_direction]
             report += f"**推荐方向**：{rec_zh}（置信度 {conf:.1%}）\n\n"
 
             if odds_data:
