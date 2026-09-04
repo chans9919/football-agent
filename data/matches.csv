@@ -7233,55 +7233,55 @@ date,home_team,away_team,home_goals,away_goals,league,ht_home_goals,ht_away_goal
 2026-05-24,Villarreal CF,Atlético Madrid,5,1,PD,4.0,1.0
 2026-05-24,Tottenham Hotspur FC,Everton FC,1,0,PL,1.0,0.0
 2026-05-24,West Ham United FC,Leeds United FC,3,0,PL,0.0,0.0
-2026-08-27,RC Celta de Vigo,CA Osasuna,1,2,PD,,
 2026-08-27,FC Barcelona,Athletic Club,2,0,PD,,
+2026-08-27,RC Celta de Vigo,CA Osasuna,1,2,PD,,
 2026-08-28,Crystal Palace FC,Manchester City FC,1,4,PL,0.0,1.0
-2026-08-28,AC Milan,Venezia FC,2,0,SA,,
-2026-08-28,FC Bayern München,VfB Stuttgart,5,1,BL1,1.0,0.0
+2026-08-28,AC Milan,Venezia FC,2,0,SA,0.0,0.0
 2026-08-28,Deportivo Alavés,Villarreal CF,1,0,PD,1.0,0.0
 2026-08-28,Real Racing Club de Santander,Elche CF,3,2,PD,3.0,0.0
 2026-08-28,LOSC Lille,Paris Saint-Germain FC,2,2,FL1,1.0,0.0
-2026-08-29,1. FC Union Berlin,Eintracht Frankfurt,3,3,BL1,1.0,2.0
-2026-08-29,SV 07 Elversberg,Bayer 04 Leverkusen,3,2,BL1,2.0,0.0
-2026-08-29,1. FC Köln,TSG 1899 Hoffenheim,3,2,BL1,0.0,1.0
-2026-08-29,Borussia Dortmund,Hamburger SV,2,0,BL1,2.0,0.0
-2026-08-29,Sevilla FC,Atlético Madrid,1,3,PD,0.0,3.0
-2026-08-29,Real Sociedad,RCD Espanyol de Barcelona,2,1,PD,1.0,1.0
-2026-08-29,Levante UD,Real Betis Balompié,5,2,PD,2.0,2.0
-2026-08-29,RB Leipzig,Borussia Mönchengladbach,3,0,BL1,1.0,0.0
+2026-08-28,FC Bayern München,VfB Stuttgart,5,1,BL1,1.0,0.0
 2026-08-29,FC Lorient,ES Troyes AC,1,2,FL1,0.0,2.0
-2026-08-29,RC Strasbourg Alsace,RC Lens,2,1,FL1,0.0,1.0
+2026-08-29,Juventus FC,Parma Calcio 1913,2,0,SA,0.0,0.0
+2026-08-29,ACF Fiorentina,Frosinone Calcio,0,3,SA,0.0,2.0
+2026-08-29,RB Leipzig,Borussia Mönchengladbach,3,0,BL1,1.0,0.0
+2026-08-29,US Sassuolo Calcio,Torino FC,2,1,SA,1.0,1.0
+2026-08-29,Olympique Lyonnais,Le Havre AC,1,1,FL1,0.0,0.0
 2026-08-29,AJ Auxerre,Angers SCO,1,3,FL1,1.0,1.0
+2026-08-29,Stade Brestois 29,Toulouse FC,2,2,FL1,1.0,1.0
+2026-08-29,Borussia Dortmund,Hamburger SV,2,0,BL1,2.0,0.0
+2026-08-29,1. FC Köln,TSG 1899 Hoffenheim,3,2,BL1,0.0,1.0
+2026-08-29,SV 07 Elversberg,Bayer 04 Leverkusen,3,2,BL1,2.0,0.0
+2026-08-29,1. FSV Mainz 05,SC Paderborn 07,0,0,BL1,0.0,0.0
+2026-08-29,RC Strasbourg Alsace,RC Lens,2,1,FL1,0.0,1.0
+2026-08-29,AC Monza,Udinese Calcio,2,3,SA,1.0,3.0
+2026-08-29,1. FC Union Berlin,Eintracht Frankfurt,3,3,BL1,1.0,2.0
+2026-08-29,Liverpool FC,Nottingham Forest FC,2,2,PL,0.0,1.0
 2026-08-29,Tottenham Hotspur FC,Newcastle United FC,0,2,PL,0.0,0.0
 2026-08-29,AFC Bournemouth,Everton FC,1,1,PL,1.0,0.0
+2026-08-29,Sevilla FC,Atlético Madrid,1,3,PD,0.0,3.0
+2026-08-29,Real Sociedad,RCD Espanyol de Barcelona,2,1,PD,1.0,1.0
 2026-08-29,Coventry City FC,Hull City AFC,0,1,PL,0.0,0.0
-2026-08-29,Liverpool FC,Nottingham Forest FC,2,2,PL,0.0,1.0
-2026-08-29,Juventus FC,Parma Calcio 1913,2,0,SA,,
-2026-08-29,Olympique Lyonnais,Le Havre AC,1,1,FL1,0.0,0.0
-2026-08-29,1. FSV Mainz 05,SC Paderborn 07,0,0,BL1,0.0,0.0
-2026-08-29,AC Monza,Udinese Calcio,2,3,SA,,
-2026-08-29,ACF Fiorentina,Frosinone Calcio,0,3,SA,,
-2026-08-29,Stade Brestois 29,Toulouse FC,2,2,FL1,1.0,1.0
-2026-08-29,US Sassuolo Calcio,Torino FC,2,1,SA,,
-2026-08-30,SC Freiburg,SV Werder Bremen,4,1,BL1,2.0,0.0
-2026-08-30,Stade Rennais FC,Le Mans FC,3,2,FL1,2.0,1.0
-2026-08-30,Paris FC,OGC Nice,3,0,FL1,1.0,0.0
-2026-08-30,Cagliari Calcio,FC Internazionale Milano,0,1,SA,0.0,1.0
-2026-08-30,FC Augsburg,FC Schalke 04,3,0,BL1,1.0,0.0
-2026-08-30,Real Madrid CF,Málaga CF,4,0,PD,3.0,0.0
-2026-08-30,RC Celta de Vigo,Athletic Club,0,2,PD,0.0,2.0
-2026-08-30,RC Deportivo La Coruña,Valencia CF,3,1,PD,2.0,1.0
-2026-08-30,AS Monaco FC,Olympique de Marseille,2,0,FL1,1.0,0.0
-2026-08-30,SS Lazio,Genoa CFC,1,0,SA,,
-2026-08-30,SSC Napoli,Como 1907,1,2,SA,,
-2026-08-30,Sunderland AFC,Fulham FC,1,0,PL,0.0,0.0
+2026-08-29,Levante UD,Real Betis Balompié,5,2,PD,2.0,2.0
 2026-08-30,Leeds United FC,Brentford FC,1,1,PL,0.0,1.0
-2026-08-30,Chelsea FC,Brighton & Hove Albion FC,4,3,PL,3.0,1.0
+2026-08-30,Cagliari Calcio,FC Internazionale Milano,0,1,SA,0.0,1.0
+2026-08-30,SS Lazio,Genoa CFC,1,0,SA,1.0,0.0
+2026-08-30,Sunderland AFC,Fulham FC,1,0,PL,0.0,0.0
 2026-08-30,Manchester United FC,Ipswich Town FC,5,2,PL,1.0,1.0
-2026-08-31,FC Barcelona,Rayo Vallecano de Madrid,5,2,PD,2.0,1.0
+2026-08-30,SSC Napoli,Como 1907,1,2,SA,1.0,2.0
+2026-08-30,Chelsea FC,Brighton & Hove Albion FC,4,3,PL,3.0,1.0
+2026-08-30,FC Augsburg,FC Schalke 04,3,0,BL1,1.0,0.0
+2026-08-30,SC Freiburg,SV Werder Bremen,4,1,BL1,2.0,0.0
+2026-08-30,Real Madrid CF,Málaga CF,4,0,PD,3.0,0.0
+2026-08-30,AS Monaco FC,Olympique de Marseille,2,0,FL1,1.0,0.0
+2026-08-30,RC Deportivo La Coruña,Valencia CF,3,1,PD,2.0,1.0
+2026-08-30,RC Celta de Vigo,Athletic Club,0,2,PD,0.0,2.0
+2026-08-30,Paris FC,OGC Nice,3,0,FL1,1.0,0.0
+2026-08-30,Stade Rennais FC,Le Mans FC,3,2,FL1,2.0,1.0
 2026-08-31,CA Osasuna,Getafe CF,1,0,PD,1.0,0.0
-2026-08-31,Atalanta BC,Bologna FC 1909,1,0,SA,,
-2026-08-31,US Lecce,AS Roma,0,4,SA,,
+2026-08-31,US Lecce,AS Roma,0,4,SA,0.0,3.0
+2026-08-31,FC Barcelona,Rayo Vallecano de Madrid,5,2,PD,2.0,1.0
 2026-08-31,Aston Villa FC,Arsenal FC,0,1,PL,0.0,0.0
+2026-08-31,Atalanta BC,Bologna FC 1909,1,0,SA,0.0,0.0
 2026-09-03,Real Sociedad,RC Celta de Vigo,0,0,PD,0.0,0.0
 2026-09-03,Toulouse FC,LOSC Lille,0,1,FL1,0.0,0.0

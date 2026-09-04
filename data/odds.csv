@@ -9,7 +9,7 @@ PL,Nottingham Forest FC,Tottenham Hotspur,2026-09-05T14:00:00Z,2.41,3.4,2.9
 PL,Hull City,Aston Villa FC,2026-09-05T16:30:00Z,4.05,3.6,1.87
 PL,Everton FC,Manchester United FC,2026-09-06T13:00:00Z,3.3,3.58,2.12
 PL,Arsenal FC,Chelsea FC,2026-09-06T15:30:00Z,1.7,3.8,4.75
-PL,Aston Villa FC,Nottingham Forest FC,2026-09-12T14:00:00Z,1.95,3.6,3.64
+PL,Aston Villa FC,Nottingham Forest FC,2026-09-12T14:00:00Z,1.95,3.6,3.7
 PL,AFC Bournemouth,Brentford FC,2026-09-12T14:00:00Z,2.52,3.5,2.6
 PL,Chelsea FC,Hull City,2026-09-12T14:00:00Z,1.23,6.1,11.0
 PL,Crystal Palace FC,Ipswich Town,2026-09-12T14:00:00Z,1.89,3.6,3.9
@@ -19,7 +19,7 @@ PL,Sunderland AFC,Arsenal FC,2026-09-12T19:00:00Z,6.5,4.05,1.49
 PL,Coventry City,Brighton and Hove Albion,2026-09-13T13:00:00Z,4.2,3.75,1.8
 PL,Manchester United FC,Manchester City FC,2026-09-13T15:30:00Z,3.05,3.8,2.1
 PL,Leeds United,Newcastle United,2026-09-14T19:00:00Z,2.48,3.5,2.65
-PD,Real Betis Balompié,Real Madrid CF,2026-09-04T19:00:00Z,6.470000000000001,5.14,1.43
+PD,Real Betis Balompié,Real Madrid CF,2026-09-04T19:00:00Z,6.45,5.14,1.43
 PD,Athletic Club,Atlético Madrid,2026-09-05T14:15:00Z,3.025,3.4,2.3
 PD,Rayo Vallecano de Madrid,Real Racing Club de Santander,2026-09-05T16:30:00Z,2.22,3.4,3.2
 PD,Villarreal CF,Deportivo La Coruña,2026-09-05T19:00:00Z,1.47,4.5,6.5
@@ -35,7 +35,7 @@ PD,CA Osasuna,RCD Espanyol de Barcelona,2026-09-12T14:15:00Z,1.92,3.4,3.95
 PD,Athletic Club,Elche CF,2026-09-12T16:30:00Z,1.57,4.0,5.5
 PD,Athletic Club,Elche CF,2026-09-13T19:00:00Z,1.55,3.95,5.25
 PD,Real Sociedad,Atlético Madrid,2026-09-13T19:00:00Z,3.025,3.6,2.165
-PD,Levante UD,FC Barcelona,2026-09-13T19:00:00Z,8.5,6.4,1.26
+PD,Levante UD,FC Barcelona,2026-09-13T19:00:00Z,8.5,6.4,1.25
 PD,CA Osasuna,RCD Espanyol de Barcelona,2026-09-13T19:00:00Z,1.93,3.4,3.8499999999999996
 PD,RC Celta de Vigo,Málaga,2026-09-13T19:00:00Z,1.75,3.55,4.6
 PD,Getafe CF,Deportivo La Coruña,2026-09-13T19:00:00Z,2.15,2.88,3.9
@@ -54,8 +54,8 @@ BL1,Eintracht Frankfurt,FC Augsburg,2026-09-06T15:30:00Z,1.935,3.925,3.45
 BL1,1. FC Union Berlin,FC Schalke 04,2026-09-11T18:30:00Z,2.0,3.65,3.23
 BL1,FC Augsburg,Bayer Leverkusen,2026-09-12T13:30:00Z,4.2,4.2,1.7
 BL1,Borussia Dortmund,SC Paderborn,2026-09-12T13:30:00Z,1.23,6.4,10.25
-BL1,SC Freiburg,Borussia Monchengladbach,2026-09-12T13:30:00Z,1.8,3.785,3.875
-BL1,FSV Mainz 05,Eintracht Frankfurt,2026-09-12T13:30:00Z,2.08,3.65,3.1
+BL1,SC Freiburg,Borussia Monchengladbach,2026-09-12T13:30:00Z,1.8,3.8,3.95
+BL1,FSV Mainz 05,Eintracht Frankfurt,2026-09-12T13:30:00Z,2.07,3.65,3.1
 BL1,TSG Hoffenheim,VfB Stuttgart,2026-09-12T13:30:00Z,2.3,3.8,2.65
 BL1,1. FC Köln,SV Werder Bremen,2026-09-12T16:30:00Z,2.04,3.6,3.2
 BL1,RB Leipzig,Hamburger SV,2026-09-13T13:30:00Z,1.35,5.1,7.0
@@ -67,7 +67,7 @@ SA,AS Roma,Atalanta BC,2026-09-05T18:45:00Z,1.72,3.7699999999999996,4.8
 SA,Frosinone Calcio,Venezia FC,2026-09-06T13:00:00Z,2.7350000000000003,3.35,2.5149999999999997
 SA,Parma Calcio 1913,AC Monza,2026-09-06T13:00:00Z,2.48,3.1,3.0
 SA,Bologna FC 1909,US Sassuolo Calcio,2026-09-06T16:00:00Z,2.0,3.4,3.8899999999999997
-SA,Juventus FC,AC Milan,2026-09-06T18:45:00Z,2.08,3.3,3.6
+SA,Juventus FC,AC Milan,2026-09-06T18:45:00Z,2.075,3.3,3.6
 SA,Cagliari Calcio,US Lecce,2026-09-07T16:30:00Z,2.0,3.2,4.025
 SA,Udinese Calcio,SS Lazio,2026-09-07T18:45:00Z,2.9,3.1,2.55
 SA,Venezia FC,ACF Fiorentina,2026-09-11T18:45:00Z,2.65,3.325,2.5
