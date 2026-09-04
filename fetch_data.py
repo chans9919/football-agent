@@ -8,6 +8,7 @@ from team_config import normalize_team_name
 ODDS_API_KEY = os.environ.get("ODDS_API_KEY", "")
 FOOTBALL_DATA_KEY = os.environ.get("FOOTBALL_DATA_API_KEY", "")
 BASE_FOOTBALL_URL = "https://api.football-data.org/v4"
+BASE_ODDS_URL = "https://api.the-odds-api.com/v4/sports"
 
 # 联赛映射：football-data编码 → 你的标准编码
 LEAGUE_MAP = {
@@ -18,6 +19,14 @@ LEAGUE_MAP = {
     "FL1": "FL1"
 }
 
+# 联赛映射：你的标准编码 → The Odds API 运动标识
+LEAGUE_ODDS_SPORT = {
+    "PL": "soccer_epl",
+    "PD": "soccer_spain_la_liga",
+    "BL1": "soccer_germany_bundesliga",
+    "SA": "soccer_italy_serie_a",
+    "FL1": "soccer_france_ligue_1"
+}
 
 def fetch_finished_matches(days=7):
     """拉取最近已结束的比赛，更新历史库"""
@@ -90,71 +99,77 @@ def fetch_finished_matches(days=7):
     combined.to_csv(data_path, index=False, encoding="utf-8")
     print(f"📊 历史库更新完成，总计 {len(combined)} 场比赛")
 
-
 def fetch_odds():
-    """从 The Odds API 获取未来比赛的赔率（胜平负）"""
+    """从 The Odds API 获取未来比赛的赔率（胜平负），分联赛单独请求"""
     if not ODDS_API_KEY:
         print("未设置 ODDS_API_KEY，跳过赔率抓取")
         return pd.DataFrame()
-
-    sports = "soccer_epl,soccer_spain_la_liga,soccer_germany_bundesliga,soccer_italy_serie_a,soccer_france_ligue_one"
-    url = f"https://api.the-odds-api.com/v4/sports/{sports}/odds/"
-    params = {
-        "apiKey": ODDS_API_KEY,
-        "regions": "eu",
-        "markets": "h2h",
-        "oddsFormat": "decimal",
-        "dateFormat": "iso",
-    }
-
-    response = requests.get(url, params=params)
-    if response.status_code != 200:
-        print(f"赔率请求失败，状态码 {response.status_code}")
-        return pd.DataFrame()
-
-    data = response.json()
-    rows = []
-
-    for match in data:
-        home = normalize_team_name(match["home_team"])
-        away = normalize_team_name(match["away_team"])
-        commence_time = match["commence_time"]
-
-        # ========== 修复问题四：收集所有庄家赔率，取中位数 ==========
-        all_home = []
-        all_draw = []
-        all_away = []
-        
-        for bk in match.get("bookmakers", []):
-            for market in bk.get("markets", []):
-                if market["key"] == "h2h":
-                    outcomes = {o["name"]: o["price"] for o in market["outcomes"]}
-                    home_odds = outcomes.get(match["home_team"])
-                    draw_odds = outcomes.get("Draw")
-                    away_odds = outcomes.get(match["away_team"])
-                    
-                    if home_odds and draw_odds and away_odds:
-                        all_home.append(home_odds)
-                        all_draw.append(draw_odds)
-                        all_away.append(away_odds)
-        
-        if all_home:
-            # 取中位数，稳健过滤异常值
-            best_home = float(np.median(all_home))
-            best_draw = float(np.median(all_draw))
-            best_away = float(np.median(all_away))
+    
+    all_odds = []
+    
+    for league, sport in LEAGUE_ODDS_SPORT.items():
+        try:
+            url = f"{BASE_ODDS_URL}/{sport}/odds"
+            params = {
+                "apiKey": ODDS_API_KEY,
+                "regions": "uk,eu",
+                "markets": "h2h",
+                "oddsFormat": "decimal",
+                "dateFormat": "iso",
+            }
             
-            rows.append({
-                "home_team": home,
-                "away_team": away,
-                "commence_time": commence_time,
-                "odds_home": best_home,
-                "odds_draw": best_draw,
-                "odds_away": best_away
-            })
-
-    return pd.DataFrame(rows)
-
+            response = requests.get(url, params=params, timeout=20)
+            if response.status_code != 200:
+                print(f"⚠️ {league} 赔率请求失败，状态码 {response.status_code}")
+                continue
+            
+            data = response.json()
+            
+            for match in data:
+                home = normalize_team_name(match["home_team"])
+                away = normalize_team_name(match["away_team"])
+                commence_time = match["commence_time"]
+                
+                # 收集所有庄家赔率，取中位数过滤异常值
+                all_home = []
+                all_draw = []
+                all_away = []
+                
+                for bk in match.get("bookmakers", []):
+                    for market in bk.get("markets", []):
+                        if market["key"] == "h2h":
+                            outcomes = {o["name"]: o["price"] for o in market["outcomes"]}
+                            home_odds = outcomes.get(match["home_team"])
+                            draw_odds = outcomes.get("Draw")
+                            away_odds = outcomes.get(match["away_team"])
+                            
+                            if home_odds and draw_odds and away_odds:
+                                all_home.append(home_odds)
+                                all_draw.append(draw_odds)
+                                all_away.append(away_odds)
+                
+                if all_home:
+                    best_home = float(np.median(all_home))
+                    best_draw = float(np.median(all_draw))
+                    best_away = float(np.median(all_away))
+                    
+                    all_odds.append({
+                        "league": league,
+                        "home_team": home,
+                        "away_team": away,
+                        "commence_time": commence_time,
+                        "odds_home": best_home,
+                        "odds_draw": best_draw,
+                        "odds_away": best_away
+                    })
+            
+            print(f"✅ {league} 拉取到 {len([o for o in all_odds if o['league']==league])} 场赔率")
+            
+        except Exception as e:
+            print(f"⚠️ {league} 赔率拉取异常: {str(e)}")
+            continue
+    
+    return pd.DataFrame(all_odds)
 
 if __name__ == "__main__":
     print("===== 1. 更新比赛结果 =====")
@@ -164,7 +179,7 @@ if __name__ == "__main__":
     odds_df = fetch_odds()
     if not odds_df.empty:
         os.makedirs("data", exist_ok=True)
-        odds_df.to_csv("data/odds.csv", index=False)
+        odds_df.to_csv("data/odds.csv", index=False, encoding="utf-8")
         print(f"✅ 赔率数据已更新：{len(odds_df)} 条")
     else:
         print("⚠️ 未抓取到赔率数据（可能未设置 ODDS_API_KEY 或额度耗尽）")
