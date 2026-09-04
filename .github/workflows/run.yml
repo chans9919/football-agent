@@ -18,6 +18,23 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+      - name: Debug 赔率匹配
+        run: |
+          python -c "
+          import pandas as pd
+          from team_config import normalize_team_name
+          odds_df = pd.read_csv('data/odds.csv') if pd.io.common.file_exists('data/odds.csv') else pd.DataFrame()
+          if odds_df.empty:
+              print('odds.csv 不存在或为空')
+          else:
+              print(f'赔率记录数: {len(odds_df)}')
+              print('主队名:')
+              for name in odds_df['home_team'].unique()[:20]:
+                  print(f'  [{name}]')
+              print('客队名:')
+              for name in odds_df['away_team'].unique()[:20]:
+                  print(f'  [{name}]')
+          "
         
       # ===== 第一步：更新最新赛果（回测前置条件） =====
       - name: 更新比赛结果与赔率
