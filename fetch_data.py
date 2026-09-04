@@ -59,7 +59,9 @@ def fetch_finished_matches(days=7):
                 away = normalize_team_name(m["awayTeam"]["name"])
                 hg = m["score"]["fullTime"]["home"]
                 ag = m["score"]["fullTime"]["away"]
-                
+                ht_hg = m["score"]["halfTime"]["home"]
+                ht_ag = m["score"]["halfTime"]["away"]
+
                 if hg is not None and ag is not None:
                     all_matches.append({
                         "date": m["utcDate"][:10],
@@ -67,7 +69,9 @@ def fetch_finished_matches(days=7):
                         "home_team": home,
                         "away_team": away,
                         "home_goals": int(hg),
-                        "away_goals": int(ag)
+                        "away_goals": int(ag),
+                        "ht_home_goals": int(ht_hg) if ht_hg is not None else None,
+                        "ht_away_goals": int(ht_ag) if ht_ag is not None else None
                     })
                     
             print(f"✅ {league_code} 拉取到 {len([m for m in all_matches if m['league']==LEAGUE_MAP[league_code]])} 场已赛")
