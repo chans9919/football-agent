@@ -5,7 +5,7 @@
 import pandas as pd
 import numpy as np
 from train_model import train_poisson, calculate_elo
-from predict_report import poisson_prob_matrix, elo_probabilities
+from predict_report import poisson_prob_matrix, elo_probabilities, logit, inv_logit, LEAGUE_WEIGHTS
 from sklearn.metrics import log_loss
 
 def main():
@@ -70,16 +70,16 @@ def main():
             away_elo = elo_dict.get(away, 1500)
             p_elo = list(elo_probabilities(home_elo, away_elo))
 
-            # 融合（泊松0.6 + ELO0.2，归一化后 0.75:0.25）
-            from predict_report import logit, inv_logit
-            weights = [0.75, 0.25]
-            fused = []
-            for i in range(3):
-                logits = [logit(p_poisson[i]), logit(p_elo[i])]
-                fused_val = sum(w * l for w, l in zip(weights, logits))
-                fused.append(inv_logit(fused_val))
-            total = sum(fused)
-            fused = [f / total for f in fused]
+        # 分联赛动态融合权重，和每日预测逻辑一致
+        weights = LEAGUE_WEIGHTS.get(league, [0.5, 0.5])
+        fused = []
+        for i in range(3):
+            logits = [logit(p_poisson[i]), logit(p_elo[i])]
+            fused_val = sum(w * l for w, l in zip(weights, logits))
+            fused.append(inv_logit(fused_val))
+        total = sum(fused)
+        fused = [f / total for f in fused]
+
 
             y_true.append(true_label)
             y_pred_poisson.append(p_poisson)
