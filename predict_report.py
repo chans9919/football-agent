@@ -50,6 +50,24 @@ LEAGUE_NAMES = {
     "SA": "意甲",
     "FL1": "法甲"
 }
+# 分联赛双模型融合权重 [泊松, ELO]
+LEAGUE_WEIGHTS = {
+    "PL":  [0.35, 0.65],  # ELO更准
+    "PD":  [0.65, 0.35],  # 泊松更准
+    "BL1": [0.35, 0.65],  # ELO更准
+    "SA":  [0.45, 0.55],  # ELO略优
+    "FL1": [0.50, 0.50],  # 两者接近
+}
+
+# 分联赛三模型融合权重 [泊松, ELO, 市场]
+LEAGUE_WEIGHTS_WITH_ODDS = {
+    "PL":  [0.20, 0.50, 0.30],
+    "PD":  [0.40, 0.25, 0.35],
+    "BL1": [0.20, 0.50, 0.30],
+    "SA":  [0.30, 0.35, 0.35],
+    "FL1": [0.30, 0.30, 0.40],
+}
+
 
 # 扩充后的中文名映射
 TEAM_NAMES_ZH = {
@@ -252,11 +270,19 @@ def poisson_prob_matrix(lambda_home, lambda_away, max_goals=8):
         for j in range(max_goals+1):
             matrix[i,j] = poisson.pmf(i, lambda_home) * poisson.pmf(j, lambda_away)
     
-    dc_scores = [(0,0), (1,0), (0,1), (1,1)]
-    dc_factor = 1.15
-    for i, j in dc_scores:
-        if i < matrix.shape[0] and j < matrix.shape[1]:
-            matrix[i, j] *= dc_factor
+    # ===== 分层DC修正：平局单独抬升，抵消泊松天然低估 =====
+dc_draw_scores = [(0,0), (1,1), (2,2)]  # 平局比分
+dc_other_scores = [(1,0), (0,1)]        # 非平局低比分
+dc_draw_factor = 1.30
+dc_other_factor = 1.15
+
+for i, j in dc_draw_scores:
+    if i < matrix.shape[0] and j < matrix.shape[1]:
+        matrix[i, j] *= dc_draw_factor
+for i, j in dc_other_scores:
+    if i < matrix.shape[0] and j < matrix.shape[1]:
+        matrix[i, j] *= dc_other_factor
+
     
     matrix /= matrix.sum()
     return matrix
@@ -322,14 +348,17 @@ def match_probabilities(lambda_home, lambda_away):
 
 def elo_probabilities(home_elo, away_elo, home_adv=65):
     diff = home_elo + home_adv - away_elo
-    draw_prob = 0.28 * (1 - abs(diff) / 600)
-    draw_prob = max(0.15, min(0.35, draw_prob))
+    # 调整平局基准与衰减速度，整体抬升平局概率
+    draw_prob = 0.30 - 0.07 * abs(diff) / 400
+    draw_prob = max(0.20, min(0.32, draw_prob))
+    
     expected_home_win = 1 / (1 + 10 ** (-diff / 400))
     remaining = 1 - draw_prob
     home_win = expected_home_win * remaining
     away_win = (1 - expected_home_win) * remaining
     total = home_win + draw_prob + away_win
     return home_win/total, draw_prob/total, away_win/total
+
 
 def find_odds(odds_df, home_en, away_en):
     if odds_df.empty:
@@ -599,12 +628,14 @@ def generate_report():
             away_elo = elo_dict.get(away_en, 1500)
             p_elo = list(elo_probabilities(home_elo, away_elo))
             # 融合权重
-            if p_market:
-                weights = [0.4, 0.4, 0.2]
-                probs_list = [p_poisson, p_market, p_elo]
-            else:
-                weights = [0.6, 0.2]
-                probs_list = [p_poisson, p_elo]
+        # 分联赛动态融合权重
+        if p_market:
+            weights = LEAGUE_WEIGHTS_WITH_ODDS.get(league, [0.3, 0.3, 0.4])
+            probs_list = [p_poisson, p_elo, p_market]
+        else:
+            weights = LEAGUE_WEIGHTS.get(league, [0.5, 0.5])
+            probs_list = [p_poisson, p_elo]
+
             total_w = sum(weights)
             weights_norm = [w / total_w for w in weights]
             fused_home = fuse_probs([p[0] for p in probs_list], weights_norm)
