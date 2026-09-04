@@ -725,8 +725,9 @@ def generate_report():
             report += f"| 主胜 | 平局 | 客胜 |\n|---|---:|---:|\n"
             report += f"| {fused_home:.1%} | {fused_draw:.1%} | {fused_away:.1%} |\n\n"
 
-            rec_zh = {"home": "主胜", "draw": "平局", "away": "客胜"}[pred_direction]
+           rec_zh = {"home": "主胜", "draw": "平局", "away": "客胜"}[pred_direction]
             report += f"**推荐方向**：{rec_zh}（置信度 {conf:.1%}）\n\n"
+
             if odds_data:
                 ev_home = fused_home * odds_data[0] - 1
                 ev_draw = fused_draw * odds_data[1] - 1
@@ -750,6 +751,8 @@ def generate_report():
                 report += f"| 平局 | {fused_draw:.1%} | {odds_data[1]:.2f} | {ev_draw:+.1%} |\n"
                 report += f"| 客胜 | {fused_away:.1%} | {odds_data[2]:.2f} | {ev_away:+.1%} |\n\n"
                 report += f"**投注建议**：{best_bet} {grade}（EV {best_ev:+.1%}）\n\n"
+            else:
+                report += f"**投注建议**：无赔率数据，无法计算期望价值\n\n"
             else:
                 report += f"**投注建议**：无赔率数据，无法计算期望价值\n\n"
 
