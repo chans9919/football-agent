@@ -50,6 +50,7 @@ LEAGUE_NAMES = {
     "SA": "意甲",
     "FL1": "法甲"
 }
+
 # 分联赛双模型融合权重 [泊松, ELO]
 LEAGUE_WEIGHTS = {
     "PL":  [0.35, 0.65],  # ELO更准
@@ -67,7 +68,6 @@ LEAGUE_WEIGHTS_WITH_ODDS = {
     "SA":  [0.30, 0.35, 0.35],
     "FL1": [0.30, 0.30, 0.40],
 }
-
 
 # 扩充后的中文名映射
 TEAM_NAMES_ZH = {
@@ -271,18 +271,17 @@ def poisson_prob_matrix(lambda_home, lambda_away, max_goals=8):
             matrix[i,j] = poisson.pmf(i, lambda_home) * poisson.pmf(j, lambda_away)
     
     # ===== 分层DC修正：平局单独抬升，抵消泊松天然低估 =====
-dc_draw_scores = [(0,0), (1,1), (2,2)]  # 平局比分
-dc_other_scores = [(1,0), (0,1)]        # 非平局低比分
-dc_draw_factor = 1.30
-dc_other_factor = 1.15
-
-for i, j in dc_draw_scores:
-    if i < matrix.shape[0] and j < matrix.shape[1]:
-        matrix[i, j] *= dc_draw_factor
-for i, j in dc_other_scores:
-    if i < matrix.shape[0] and j < matrix.shape[1]:
-        matrix[i, j] *= dc_other_factor
-
+    dc_draw_scores = [(0,0), (1,1), (2,2)]  # 平局比分
+    dc_other_scores = [(1,0), (0,1)]        # 非平局低比分
+    dc_draw_factor = 1.30
+    dc_other_factor = 1.15
+    
+    for i, j in dc_draw_scores:
+        if i < matrix.shape[0] and j < matrix.shape[1]:
+            matrix[i, j] *= dc_draw_factor
+    for i, j in dc_other_scores:
+        if i < matrix.shape[0] and j < matrix.shape[1]:
+            matrix[i, j] *= dc_other_factor
     
     matrix /= matrix.sum()
     return matrix
@@ -358,7 +357,6 @@ def elo_probabilities(home_elo, away_elo, home_adv=65):
     away_win = (1 - expected_home_win) * remaining
     total = home_win + draw_prob + away_win
     return home_win/total, draw_prob/total, away_win/total
-
 
 def find_odds(odds_df, home_en, away_en):
     if odds_df.empty:
@@ -593,7 +591,7 @@ def generate_report():
     # 按开赛时间排序
     all_upcoming_sorted = sorted(all_upcoming, key=lambda x: x["date"])
     current_league = ""
-        for match in all_upcoming_sorted:
+    for match in all_upcoming_sorted:
         league = match["league"]
         league_df = league_df_cache.get(league, pd.DataFrame())
         elo_dict = elo_cache.get(league, {})
@@ -761,8 +759,6 @@ def generate_report():
             print(f"❌ 跳过比赛 {home_en} vs {away_en}：{str(e)}")
             traceback.print_exc()
             continue
-
-
     print(f"\n✅ 成功生成 {match_counter-1} 场比赛预测")
     # 保存预测记录
     if predictions:
