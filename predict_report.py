@@ -731,9 +731,8 @@ def generate_report():
             report += f"| 主胜 | 平局 | 客胜 |\n|---|---:|---:|\n"
             report += f"| {fused_home:.1%} | {fused_draw:.1%} | {fused_away:.1%} |\n\n"
 
-            rec_zh = {"home": "主胜", "draw": "平局", "away": "客胜"}[pred_direction]
+                        rec_zh = {"home": "主胜", "draw": "平局", "away": "客胜"}[pred_direction]
             report += f"**推荐方向**：{rec_zh}（置信度 {conf:.1%}）\n\n"
-
             if odds_data:
                 ev_home = fused_home * odds_data[0] - 1
                 ev_draw = fused_draw * odds_data[1] - 1
@@ -741,7 +740,6 @@ def generate_report():
                 evs = {"主胜": ev_home, "平局": ev_draw, "客胜": ev_away}
                 best_bet = max(evs, key=evs.get)
                 best_ev = evs[best_bet]
-
                 if best_ev > 0.15:
                     grade = "A 档（强推）"
                 elif best_ev > 0.05:
@@ -750,7 +748,6 @@ def generate_report():
                     grade = "C 档（观望）"
                 else:
                     grade = "不建议下注"
-
                 report += f"**期望价值（EV）**\n"
                 report += f"| 选项 | 模型概率 | 赔率 | EV |\n|---|---:|---:|---:|\n"
                 report += f"| 主胜 | {fused_home:.1%} | {odds_data[0]:.2f} | {ev_home:+.1%} |\n"
@@ -759,24 +756,19 @@ def generate_report():
                 report += f"**投注建议**：{best_bet} {grade}（EV {best_ev:+.1%}）\n\n"
             else:
                 report += f"**投注建议**：无赔率数据，无法计算期望价值\n\n"
-            else:
-                report += f"**投注建议**：无赔率数据，无法计算期望价值\n\n"
 
             report += f"**比分 Top3**\n"
             for score, prob in poisson_probs['top_scores']:
                 report += f"- {score}（{prob:.1%}）\n"
             report += "\n"
-
             report += f"**半全场 Top3**\n"
             for htft, prob in poisson_probs['top_htft']:
                 report += f"- {htft}（{prob:.1%}）\n"
             report += "\n"
-
             report += f"**让球（主让一球）**\n"
             hw, hd, ha = poisson_probs['handicap']
-            report += f"| 让球后主胜 | 让球后平局 | 让球后客胜 |\n|---|---:|---:|\n"
+            report += f"| 让球后主胜 | 让球平局 | 让球客胜 |\n|---|---:|---:|\n"
             report += f"| {hw:.1%} | {hd:.1%} | {ha:.1%} |\n\n"
-
             report += f"**总进球分布**\n"
             for total, prob in poisson_probs['total_goals'][:5]:
                 report += f"- {total}球：{prob:.1%}  "
