@@ -727,6 +727,31 @@ def generate_report():
 
             rec_zh = {"home": "主胜", "draw": "平局", "away": "客胜"}[pred_direction]
             report += f"**推荐方向**：{rec_zh}（置信度 {conf:.1%}）\n\n"
+            if odds_data:
+                ev_home = fused_home * odds_data[0] - 1
+                ev_draw = fused_draw * odds_data[1] - 1
+                ev_away = fused_away * odds_data[2] - 1
+                evs = {"主胜": ev_home, "平局": ev_draw, "客胜": ev_away}
+                best_bet = max(evs, key=evs.get)
+                best_ev = evs[best_bet]
+
+                if best_ev > 0.15:
+                    grade = "A 档（强推）"
+                elif best_ev > 0.05:
+                    grade = "B 档（可买）"
+                elif best_ev > 0:
+                    grade = "C 档（观望）"
+                else:
+                    grade = "不建议下注"
+
+                report += f"**期望价值（EV）**\n"
+                report += f"| 选项 | 模型概率 | 赔率 | EV |\n|---|---:|---:|---:|\n"
+                report += f"| 主胜 | {fused_home:.1%} | {odds_data[0]:.2f} | {ev_home:+.1%} |\n"
+                report += f"| 平局 | {fused_draw:.1%} | {odds_data[1]:.2f} | {ev_draw:+.1%} |\n"
+                report += f"| 客胜 | {fused_away:.1%} | {odds_data[2]:.2f} | {ev_away:+.1%} |\n\n"
+                report += f"**投注建议**：{best_bet} {grade}（EV {best_ev:+.1%}）\n\n"
+            else:
+                report += f"**投注建议**：无赔率数据，无法计算期望价值\n\n"
 
             report += f"**比分 Top3**\n"
             for score, prob in poisson_probs['top_scores']:
