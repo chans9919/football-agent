@@ -697,6 +697,12 @@ def generate_report():
                 "fused_draw": fused_draw,
                 "fused_away": fused_away,
                 "pred_direction": pred_direction,
+                "odds_home": odds_data[0] if odds_data else np.nan,
+                "odds_draw": odds_data[1] if odds_data else np.nan,
+                "odds_away": odds_data[2] if odds_data else np.nan,
+                "ev_home": fused_home * odds_data[0] - 1 if odds_data else np.nan,
+                "ev_draw": fused_draw * odds_data[1] - 1 if odds_data else np.nan,
+                "ev_away": fused_away * odds_data[2] - 1 if odds_data else np.nan,
                 "status": "pending"
             }
             predictions.append(record)
