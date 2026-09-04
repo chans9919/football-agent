@@ -50,6 +50,8 @@ jobs:
       # ===== 第三步：训练与评估模型（基于最新完整数据） =====
       - name: Train and evaluate model
         run: python train_model.py
+      - name: 历史回测（仅跑一次，拿到结果后删掉）
+        run: python backtest_historical.py
 
       # ===== 第四步：生成当日预测 =====
       - name: Generate predictions and report
