@@ -593,7 +593,7 @@ def generate_report():
     # 按开赛时间排序
     all_upcoming_sorted = sorted(all_upcoming, key=lambda x: x["date"])
     current_league = ""
-    for match in all_upcoming_sorted:
+        for match in all_upcoming_sorted:
         league = match["league"]
         league_df = league_df_cache.get(league, pd.DataFrame())
         elo_dict = elo_cache.get(league, {})
@@ -606,7 +606,7 @@ def generate_report():
                 report += f"\n## {league_name}\n\n"
             else:
                 report += f"\n## {league_name} ⚠️ 数据不足，仅供参考\n\n"
-                try:
+        try:
             home_en = match["home_team"]
             away_en = match["away_team"]
             home_zh = get_team_name_zh(home_en)
@@ -761,6 +761,7 @@ def generate_report():
             print(f"❌ 跳过比赛 {home_en} vs {away_en}：{str(e)}")
             traceback.print_exc()
             continue
+
 
     print(f"\n✅ 成功生成 {match_counter-1} 场比赛预测")
     # 保存预测记录
