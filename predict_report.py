@@ -606,7 +606,7 @@ def generate_report():
                 report += f"\n## {league_name}\n\n"
             else:
                 report += f"\n## {league_name} ⚠️ 数据不足，仅供参考\n\n"
-        try:
+                try:
             home_en = match["home_team"]
             away_en = match["away_team"]
             home_zh = get_team_name_zh(home_en)
@@ -627,15 +627,13 @@ def generate_report():
             home_elo = elo_dict.get(home_en, 1500)
             away_elo = elo_dict.get(away_en, 1500)
             p_elo = list(elo_probabilities(home_elo, away_elo))
-            # 融合权重
-        # 分联赛动态融合权重
-        if p_market:
-            weights = LEAGUE_WEIGHTS_WITH_ODDS.get(league, [0.3, 0.3, 0.4])
-            probs_list = [p_poisson, p_elo, p_market]
-        else:
-            weights = LEAGUE_WEIGHTS.get(league, [0.5, 0.5])
-            probs_list = [p_poisson, p_elo]
-
+            # 分联赛动态融合权重
+            if p_market:
+                weights = LEAGUE_WEIGHTS_WITH_ODDS.get(league, [0.3, 0.3, 0.4])
+                probs_list = [p_poisson, p_elo, p_market]
+            else:
+                weights = LEAGUE_WEIGHTS.get(league, [0.5, 0.5])
+                probs_list = [p_poisson, p_elo]
             total_w = sum(weights)
             weights_norm = [w / total_w for w in weights]
             fused_home = fuse_probs([p[0] for p in probs_list], weights_norm)
@@ -763,6 +761,7 @@ def generate_report():
             print(f"❌ 跳过比赛 {home_en} vs {away_en}：{str(e)}")
             traceback.print_exc()
             continue
+
     print(f"\n✅ 成功生成 {match_counter-1} 场比赛预测")
     # 保存预测记录
     if predictions:
