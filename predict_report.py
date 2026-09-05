@@ -12,7 +12,7 @@ from team_config import normalize_team_name
 API_KEY = os.environ.get("FOOTBALL_DATA_API_KEY")
 BASE_URL = "https://api.football-data.org/v4"
 
-# ========== 竞彩时间窗口（北京时间 当日17:00 ~ 次日12:00） ==========
+# ========== 竞彩时间窗口 ==========
 def get_time_window():
     now_utc = datetime.now(timezone.utc)
     now_bj = now_utc.astimezone(timezone(timedelta(hours=8)))
@@ -65,8 +65,37 @@ LEAGUE_WEIGHTS_WITH_ODDS = {
     "FL1": [0.30, 0.30, 0.40],
 }
 
+# ========== 新增：分联赛校准参数 ==========
+LEAGUE_PARAMS = {
+    "PL": {
+        "draw_corr": 0.98,      # 平局修正（英超平局偏少）
+        "tg_corr": 1.05,        # 总进球修正（英超进球偏多）
+        "single_draw_bonus": 1.08 # 单关场次平局加成
+    },
+    "PD": {
+        "draw_corr": 1.05,
+        "tg_corr": 0.98,
+        "single_draw_bonus": 1.08
+    },
+    "BL1": {
+        "draw_corr": 0.95,
+        "tg_corr": 1.08,
+        "single_draw_bonus": 1.08
+    },
+    "SA": {
+        "draw_corr": 1.03,
+        "tg_corr": 0.97,
+        "single_draw_bonus": 1.08
+    },
+    "FL1": {
+        "draw_corr": 1.02,
+        "tg_corr": 1.00,
+        "single_draw_bonus": 1.08
+    }
+}
+
 # 平系策略阈值
-PING_STANDARD_THRESHOLD = 0.48  # 半场平局概率≥48% 符合平系择赛标准
+PING_STANDARD_THRESHOLD = 0.48
 
 # 球队中文名映射
 TEAM_NAMES_ZH = {
@@ -90,9 +119,6 @@ TEAM_NAMES_ZH = {
     "Southampton FC": "南安普顿",
     "Nottingham Forest FC": "诺丁汉森林",
     "AFC Bournemouth": "伯恩茅斯",
-    "Luton Town FC": "卢顿",
-    "Burnley FC": "伯恩利",
-    "Sheffield United FC": "谢菲联",
     "Ipswich Town FC": "伊普斯维奇",
     "Coventry City FC": "考文垂",
     "Sunderland AFC": "桑德兰",
@@ -221,7 +247,7 @@ def get_team_name_zh(team_en):
                 return zh
     return team_en
 
-# ========== 数据拉取与核心计算函数 ==========
+# ========== 数据拉取函数 ==========
 def get_upcoming_matches(league_code, days_ahead=2):
     if not API_KEY:
         print(f"⚠️ 未设置FOOTBALL_DATA_API_KEY，跳过{league_code}赛程拉取")
@@ -289,7 +315,7 @@ def match_probabilities(lambda_home, lambda_away, half_ratio=0.44):
             score_probs[f"{i}-{j}"] = matrix[i,j]
     top_scores = sorted(score_probs.items(), key=lambda x: x[1], reverse=True)[:3]
     
-    # 基于联赛真实半场进球比计算半场概率
+    # 半场概率
     lambda_half_home = lambda_home * half_ratio
     lambda_half_away = lambda_away * half_ratio
     half_matrix = poisson_prob_matrix(lambda_half_home, lambda_half_away, max_goals=4)
@@ -422,9 +448,7 @@ def load_or_calculate_elo(league_df, league):
         print(f"⚠️ {league} 数据不足，ELO使用默认值")
         return {}
 
-# ========== 各联赛真实半场进球比计算 ==========
 def calculate_league_half_ratio(all_matches_df):
-    """从历史数据计算各联赛的半场进球占比"""
     ratios = {}
     default_ratio = 0.44
     for league in LEAGUES:
@@ -454,13 +478,11 @@ def calculate_league_half_ratio(all_matches_df):
             ratios[league] = default_ratio
     return ratios
 
-# ========== 单场胜平负评级函数 ==========
 def grade_match(fused_probs, odds_data):
     max_prob = max(fused_probs)
     dir_idx = np.argmax(fused_probs)
     dir_name = ["主胜", "平局", "客胜"][dir_idx]
     
-    # 概率档位
     if max_prob >= 0.5:
         prob_grade = "🟢 绿灯"
         grade = "A档"
@@ -474,7 +496,6 @@ def grade_match(fused_probs, odds_data):
         prob_grade = "🔴 红灯"
         grade = "不推荐"
     
-    # 赔率校验
     odds_comment = "无赔率数据"
     final_grade = grade
     ev = None
@@ -511,21 +532,19 @@ def grade_match(fused_probs, odds_data):
         "rec_odds": odds_data[dir_idx] if odds_data else None
     }
 
-# ========== 修复：半全场双选组合（方向对齐+分级修正） ==========
+# ========== 修复：半全场双选 方向强制对齐 ==========
 def calculate_hf_combos(htft_probs, ht_draw_prob, full_dir_idx, odds_data=None):
     """
     full_dir_idx: 全场方向 0=主胜 1=平局 2=客胜
-    首选规则：方向对齐优先 > 综合概率高 > EV≥0
-    次选规则：EV收益率高优先
+    首选规则：方向对齐优先 > 综合概率最高 > EV≥0
+    次选规则：EV收益率最高
     """
-    # 平系组合：平平、平胜、平负
     ping_combos = {
         "平平": htft_probs["平平"],
         "平胜": htft_probs["平胜"],
         "平负": htft_probs["平负"]
     }
     
-    # 半全场SP估算
     sp_est = {}
     if odds_data:
         h_odds, d_odds, a_odds = odds_data
@@ -535,7 +554,6 @@ def calculate_hf_combos(htft_probs, ht_draw_prob, full_dir_idx, odds_data=None):
         sp_est["胜胜"] = h_odds * 1.6
         sp_est["负负"] = a_odds * 1.6
     
-    # 生成双选组合
     combos = []
     options = list(ping_combos.items())
     
@@ -554,7 +572,7 @@ def calculate_hf_combos(htft_probs, ht_draw_prob, full_dir_idx, odds_data=None):
                 ev = None
                 ev_pct = None
             
-            # 方向对齐判定
+            # 方向对齐得分
             align_score = 0
             if full_dir_idx == 0:  # 全场主胜
                 if "平胜" in (name1, name2):
@@ -580,7 +598,7 @@ def calculate_hf_combos(htft_probs, ht_draw_prob, full_dir_idx, odds_data=None):
     first_candidates.sort(key=lambda x: (x["align_score"], x["total_prob"]), reverse=True)
     first = first_candidates[0] if first_candidates else None
     
-    # ========== 次选：EV收益率最高，且不是首选 ==========
+    # ========== 次选：EV最高，且不是首选 ==========
     second_candidates = [c for c in combos if c != first]
     if odds_data:
         second_candidates.sort(key=lambda x: x["ev_pct"] if x["ev_pct"] is not None else -999, reverse=True)
@@ -608,7 +626,6 @@ def calculate_hf_combos(htft_probs, ht_draw_prob, full_dir_idx, odds_data=None):
     
     return result
 
-# ========== 半全场串关最优组合生成 ==========
 def build_hf_parlay(ping_list, combo_type="首选"):
     if len(ping_list) < 2:
         return None
@@ -710,6 +727,7 @@ def generate_report():
         elo_dict = elo_cache.get(league, {})
         data_sufficient = data_sufficient_cache.get(league, False)
         league_name = LEAGUE_NAMES.get(league, league)
+        params = LEAGUE_PARAMS.get(league, LEAGUE_PARAMS["PL"])
         
         try:
             home_en = match["home_team"]
@@ -725,7 +743,18 @@ def generate_report():
             lh, la = train_poisson(league_df, home_en, away_en)
             half_ratio = league_half_ratios.get(league, 0.44)
             poisson_probs = match_probabilities(lh, la, half_ratio=half_ratio)
-            p_poisson = [poisson_probs["home_win"], poisson_probs["draw"], poisson_probs["away_win"]]
+            
+            # ========== 新增：分联赛概率校准 ==========
+            p_poisson_raw = [poisson_probs["home_win"], poisson_probs["draw"], poisson_probs["away_win"]]
+            # 平局修正
+            p_poisson = [
+                p_poisson_raw[0],
+                p_poisson_raw[1] * params["draw_corr"],
+                p_poisson_raw[2]
+            ]
+            # 归一化
+            total_p = sum(p_poisson)
+            p_poisson = [p / total_p for p in p_poisson]
             
             odds_data = find_odds(odds_df, home_en, away_en)
             if odds_data:
@@ -757,13 +786,11 @@ def generate_report():
             fused_away /= total_fused
             fused_probs = [fused_home, fused_draw, fused_away]
             
-            # 单场评级
             grade_info = grade_match(fused_probs, odds_data)
             full_dir_idx = grade_info["dir_idx"]
             
-            # ========== 修复：让球盘自动识别强弱队 ==========
-            # 判断强队
-            if fused_probs[0] > fused_probs[2]:
+            # ========== 修复：自动识别强队，选择对应让球数据 ==========
+            if fused_probs[0] >= fused_probs[2]:
                 favorite_team = "home"
                 favorite_name = home_zh
                 h_win, h_draw, h_lose = poisson_probs["handicap"]["home_let"]
@@ -781,7 +808,6 @@ def generate_report():
                 "is_steady": h_win >= 0.6
             }
             
-            # 半全场双选组合（传入全场方向）
             hf_combos = calculate_hf_combos(
                 poisson_probs["htft_probs"],
                 poisson_probs["ht_draw_prob"],
@@ -789,10 +815,8 @@ def generate_report():
                 odds_data
             )
             
-            # 总进球TOP3
             top_ttg = sorted(poisson_probs["total_goals"], key=lambda x: x[1], reverse=True)[:3]
             
-            # 模型vs市场分歧
             divergence = None
             if p_market:
                 diff = abs(fused_probs[grade_info["dir_idx"]] - p_market[grade_info["dir_idx"]])
@@ -802,7 +826,6 @@ def generate_report():
                     "type": "方向对立" if np.argmax(fused_probs) != np.argmax(p_market) else "价值追击"
                 }
             
-            # 模型一致性校验
             dirs = [np.argmax(p_poisson), np.argmax(p_elo)]
             if p_market:
                 dirs.append(np.argmax(p_market))
@@ -844,21 +867,20 @@ def generate_report():
             traceback.print_exc()
             continue
     
-    # ========== 第二步：生成完整决策报告 ==========
+    # ========== 第二步：生成完整报告 ==========
     now_bj = datetime.utcnow() + timedelta(hours=8)
     report = ""
     
-    # 1. 报告头部
-    report += "# 足球预测报告（决策增强版）\n\n"
+    report += "# 足球预测报告（逻辑修复版）\n\n"
     report += f"**生成时间**：{now_bj.strftime('%Y-%m-%d %H:%M:%S')}（北京时间）\n"
     report += f"**预测时段**：{TARGET_DATE_LABEL} 17:00 ~ 次日 12:00\n"
     report += f"**数据来源**：Football-Data.org + The Odds API + ELO\n"
     
     has_any_odds = any(r["odds_data"] for r in match_results)
     if has_any_odds:
-        model_desc = "泊松模型（DC修正） + 全庄家赔率中位数 + ELO 在 logit 空间融合"
+        model_desc = "泊松模型（DC修正+联赛校准） + 全庄家赔率中位数 + ELO 在 logit 空间融合"
     else:
-        model_desc = "泊松模型（DC修正） + ELO（本期无赔率数据）"
+        model_desc = "泊松模型（DC修正+联赛校准） + ELO（本期无赔率数据）"
     report += f"**模型说明**：{model_desc}\n\n"
     
     report += "> ⚠️ 风险提示：所有预测仅供参考，不构成投注建议。足球比赛不确定性高，请理性购彩，量力而行。\n\n"
@@ -872,7 +894,7 @@ def generate_report():
     report += f"- A档强推：{grade_a_count} 场 | B档可买：{grade_b_count} 场 | 符合平系策略：{ping_count} 场\n\n"
     report += "---\n\n"
     
-    # 2. 总览汇总表
+    # 总览汇总表
     report += "## 📋 总览汇总表\n\n"
     report += "💡 快速用法：直接筛「A档」比赛做主投，「B档」做串关，C档直接跳过。\n\n"
     report += "| 编号 | 对阵 | 胜平负首选 | 档位 | 让球参考 | 半全场首选双选 | 总进球首选 |\n"
@@ -902,7 +924,7 @@ def generate_report():
     
     report += "\n---\n\n"
     
-    # 3. 单场深度决策分析
+    # 单场深度分析
     report += "## ⚽ 单场深度决策分析\n\n"
     current_league = ""
     
@@ -1016,7 +1038,7 @@ def generate_report():
             report += f"- **综合期望收益**：{c['ev_pct']:+.1f}%，长期微亏，仅适合临场小仓位博弈\n"
             report += "\n"
         
-        # 四、总进球&比分参考
+        # 四、总进球&比分
         report += "##### 四、总进球 & 比分参考\n\n"
         report += "**总进球TOP3**："
         ttg_str = [f"{x[0]}球({x[1]:.1%})" for x in r["top_ttg"]]
@@ -1039,7 +1061,7 @@ def generate_report():
         
         report += "---\n\n"
     
-    # 4. 专题汇总
+    # 专题汇总
     report += "## 🎯 专题汇总\n\n"
     
     report += "### （1）搏冷备选汇总\n\n"
@@ -1083,7 +1105,7 @@ def generate_report():
     
     report += "---\n\n"
     
-    # 5. 分档位串关方案
+    # 分档位串关方案
     report += "## 🔗 分档位串关方案\n\n"
     
     ab_grade = [r for r in match_results if r["grade_info"]["grade"] in ["A档", "B档"] and r["odds_data"]]
@@ -1109,19 +1131,19 @@ def generate_report():
             report += "- **组合逻辑**：双稳健档位搭配，跨联赛降低同时爆冷风险，赔率处于黄金区间。\n"
             report += "- **建议仓位**：占串关总资金的60%-70%\n\n"
         
-        report += "### （2）增值串（中风险 · 轻仓搭配）\n\n"
-        report += "> 选场规则：单场B档+让球稳胆搭配；总赔率区间：3.2~4.5\n\n"
+        report += "### （2）让球价值串（中风险 · 轻仓搭配）\n\n"
+        report += "> 选场规则：强队让球稳胆+高赔选项搭配；总赔率区间：3.2~4.5\n\n"
         
-        if len(ab_sorted) >= 3:
-            c1 = ab_sorted[0]
+        if len(steady_handicap) >= 1 and len(ab_sorted) >= 2:
+            c1 = steady_handicap[0]
             c3 = ab_sorted[-1]
-            total_odds = c1["grade_info"]["rec_odds"] * c3["grade_info"]["rec_odds"]
+            total_odds = 1.8 * c3["grade_info"]["rec_odds"]
             
             report += "#### 组合一\n"
-            report += f"- **对阵1**：[{c1['league_name']}] {c1['home_zh']} vs {c1['away_zh']}（稳胆打底）\n"
+            report += f"- **对阵1**：[{c1['league_name']}] {c1['home_zh']} vs {c1['away_zh']}（{c1['handicap']['favorite_name']}让球稳胆）\n"
             report += f"- **对阵2**：[{c3['league_name']}] {c3['home_zh']} vs {c3['away_zh']}（收益增强）\n"
-            report += f"- **总赔率**：{total_odds:.2f}\n"
-            report += "- **组合逻辑**：稳胆打底+高收益选项搭配，平衡风险与收益。\n"
+            report += f"- **总赔率**：约{total_odds:.2f}\n"
+            report += "- **组合逻辑**：让球稳胆打底+高收益选项搭配，平衡风险与收益。\n"
             report += "- **建议仓位**：占串关总资金的20%-30%\n\n"
         
         report += "### （3）半全场串关（中高风险 · 平系专属）\n\n"
@@ -1175,7 +1197,7 @@ def generate_report():
     
     report += "---\n\n"
     
-    # 6. 本期数据规律
+    # 本期数据规律
     report += "## 📊 本期数据规律（自动统计）\n\n"
     
     prob_60 = sum(1 for r in match_results if r["grade_info"]["max_prob"] >= 0.6)
@@ -1219,7 +1241,7 @@ def generate_report():
     
     report += "---\n\n"
     
-    # 7. 术语对照表
+    # 术语对照表
     report += "## 📚 附录：术语大白话对照表\n\n"
     report += "| 术语 | 大白话解释 |\n|------|------------|\n"
     report += "| 融合概率 | 多个模型综合算出的结果发生概率，数值越高越容易中 |\n"
@@ -1231,7 +1253,7 @@ def generate_report():
     report += "| 稳胆 | 概率极高的选项，串关里用来打底，降低整体风险 |\n"
     report += "| 市场过热 | 热门方向买的人太多，赔率被压低，长期买性价比低 |\n\n"
     
-    # ========== 保存数据与报告 ==========
+    # 保存
     print(f"\n✅ 成功生成 {len(match_results)} 场比赛预测")
     
     if match_results:
@@ -1270,7 +1292,7 @@ def generate_report():
     os.makedirs("docs", exist_ok=True)
     with open("docs/index.md", "w", encoding="utf-8") as f:
         f.write(report)
-    print(f"📄 决策增强版报告已生成")
+    print(f"📄 逻辑修复版报告已生成")
 
 if __name__ == "__main__":
     generate_report()
