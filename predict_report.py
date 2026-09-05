@@ -94,6 +94,39 @@ LEAGUE_PARAMS = {
     }
 }
 
+# ========== 新增：联赛基础配置（战意模块用） ==========
+LEAGUE_TOTAL_ROUNDS = {
+    "PL": 38,
+    "PD": 38,
+    "BL1": 34,
+    "SA": 38,
+    "FL1": 38
+}
+
+LEAGUE_TEAM_COUNT = {
+    "PL": 20,
+    "PD": 20,
+    "BL1": 18,
+    "SA": 20,
+    "FL1": 20
+}
+
+# 欧战资格线（该名次及以上有欧战资格）
+LEAGUE_EUROPA_LINE = {
+    "PL": 6,
+    "PD": 6,
+    "BL1": 6,
+    "SA": 6,
+    "FL1": 4
+}
+
+# 战意分值
+MOTIVATION_SCORE = {
+    "强": 15,
+    "正常": 0,
+    "弱": -10
+}
+
 # 平系策略阈值
 PING_STANDARD_THRESHOLD = 0.48
 
@@ -530,12 +563,8 @@ def grade_match(fused_probs, odds_data):
         "rec_odds": odds_data[dir_idx] if odds_data else None
     }
 
-# ========== 修复：半全场双选 方向强制对齐 首选只看方向 ==========
+# ========== 半全场双选 方向强制对齐 ==========
 def calculate_hf_combos(htft_probs, ht_draw_prob, full_dir_idx, odds_data=None):
-    """
-    首选规则：必须与全场方向对齐 > 综合概率最高 > EV仅作参考
-    次选规则：EV收益率最高，方向不限，作为收益增强
-    """
     ping_combos = {
         "平平": htft_probs["平平"],
         "平胜": htft_probs["平胜"],
@@ -569,15 +598,14 @@ def calculate_hf_combos(htft_probs, ht_draw_prob, full_dir_idx, odds_data=None):
                 ev = None
                 ev_pct = None
             
-            # 方向对齐得分
             align_score = 0
-            if full_dir_idx == 0:  # 全场主胜
+            if full_dir_idx == 0:
                 if "平胜" in (name1, name2):
                     align_score = 100
-            elif full_dir_idx == 2:  # 全场客胜
+            elif full_dir_idx == 2:
                 if "平负" in (name1, name2):
                     align_score = 100
-            else:  # 全场平局
+            else:
                 if "平平" in (name1, name2):
                     align_score = 100
             
@@ -590,12 +618,12 @@ def calculate_hf_combos(htft_probs, ht_draw_prob, full_dir_idx, odds_data=None):
                 "align_score": align_score
             })
     
-    # ========== 首选：必须方向对齐，按概率排序 ==========
+    # 首选：必须方向对齐，按概率排序
     first_candidates = [c for c in combos if c["align_score"] == 100]
     first_candidates.sort(key=lambda x: x["total_prob"], reverse=True)
     first = first_candidates[0] if first_candidates else None
     
-    # ========== 次选：EV最高，方向不限 ==========
+    # 次选：EV最高，方向不限
     second_candidates = [c for c in combos if c != first]
     if odds_data:
         second_candidates.sort(key=lambda x: x["ev_pct"] if x["ev_pct"] is not None else -999, reverse=True)
@@ -668,6 +696,209 @@ def build_hf_parlay(ping_list, combo_type="首选"):
     candidates.sort(key=lambda x: x["score"], reverse=True)
     return candidates[0]
 
+# ========== 新增：战意系数模块 ==========
+def calculate_league_standings(league_df, league):
+    """
+    计算联赛当前积分榜
+    返回：{team: {"points": int, "gd": int, "rank": int, "played": int}}
+    """
+    if league_df.empty:
+        return {}
+    
+    # 只算已完赛的比赛
+    if "status" in league_df.columns:
+        finished = league_df[league_df["status"].isin(["FINISHED", "finished", "已完赛"])]
+    else:
+        finished = league_df.copy()
+    
+    if finished.empty:
+        return {}
+    
+    team_stats = {}
+    
+    for _, row in finished.iterrows():
+        home = row.get("home_team", "")
+        away = row.get("away_team", "")
+        hg = row.get("home_goals", 0)
+        ag = row.get("away_goals", 0)
+        
+        if pd.isna(hg) or pd.isna(ag):
+            continue
+        
+        for team in [home, away]:
+            if team not in team_stats:
+                team_stats[team] = {"points": 0, "gf": 0, "ga": 0, "played": 0}
+        
+        team_stats[home]["played"] += 1
+        team_stats[away]["played"] += 1
+        team_stats[home]["gf"] += hg
+        team_stats[home]["ga"] += ag
+        team_stats[away]["gf"] += ag
+        team_stats[away]["ga"] += hg
+        
+        if hg > ag:
+            team_stats[home]["points"] += 3
+        elif hg == ag:
+            team_stats[home]["points"] += 1
+            team_stats[away]["points"] += 1
+        else:
+            team_stats[away]["points"] += 3
+    
+    # 计算净胜球并排名
+    for team in team_stats:
+        team_stats[team]["gd"] = team_stats[team]["gf"] - team_stats[team]["ga"]
+    
+    sorted_teams = sorted(team_stats.items(), key=lambda x: (x[1]["points"], x[1]["gd"]), reverse=True)
+    for rank, (team, _) in enumerate(sorted_teams, 1):
+        team_stats[team]["rank"] = rank
+    
+    return team_stats
+
+def get_current_round(standings, league):
+    """估算当前轮次：用每队平均已赛场次"""
+    if not standings:
+        return 1
+    avg_played = np.mean([s["played"] for s in standings.values()])
+    return max(1, round(avg_played))
+
+def get_motivation(team, standings, league, current_round):
+    """
+    判断球队战意等级
+    返回：(等级, 分值, 说明)
+    """
+    if team not in standings:
+        return "正常", 0, "无积分榜数据"
+    
+    info = standings[team]
+    rank = info["rank"]
+    points = info["points"]
+    total_teams = LEAGUE_TEAM_COUNT.get(league, 20)
+    total_rounds = LEAGUE_TOTAL_ROUNDS.get(league, 38)
+    
+    # 赛季初（前5轮），战意参考价值低，统一正常
+    if current_round <= 5:
+        return "正常", 0, "赛季初，战意参考价值低"
+    
+    # 争冠组：排名前4，与榜首分差≤5分
+    sorted_by_points = sorted(standings.items(), key=lambda x: x[1]["points"], reverse=True)
+    top_points = sorted_by_points[0][1]["points"] if sorted_by_points else 0
+    
+    if rank <= 4 and (top_points - points) <= 5:
+        return "强", MOTIVATION_SCORE["强"], f"争冠组（排名第{rank}，距榜首{top_points-points}分）"
+    
+    # 欧战资格组：排名在欧战线±2名，与欧战线分差≤5分
+    europa_line = LEAGUE_EUROPA_LINE.get(league, 6)
+    if europa_line - 2 <= rank <= europa_line + 2:
+        if rank <= europa_line:
+            line_points = sorted_by_points[europa_line - 1][1]["points"] if len(sorted_by_points) >= europa_line else 0
+            diff = points - line_points
+            return "强", MOTIVATION_SCORE["强"], f"欧战区内（排名第{rank}）"
+        else:
+            line_points = sorted_by_points[europa_line - 1][1]["points"] if len(sorted_by_points) >= europa_line else 0
+            diff = line_points - points
+            if diff <= 5:
+                return "强", MOTIVATION_SCORE["强"], f"冲击欧战（排名第{rank}，距欧战区{diff}分）"
+    
+    # 保级组：后3名直接算，倒数4-5名与安全线差≤3分
+    relegation_zone_start = total_teams - 2  # 倒数第3名的排名
+    safety_rank = total_teams - 3  # 倒数第4名（安全线）
+    
+    if rank >= relegation_zone_start:
+        return "强", MOTIVATION_SCORE["强"], f"保级区（排名第{rank}）"
+    
+    if safety_rank <= rank <= total_teams - 4 + 1:  # 倒数4-5名
+        safety_points = sorted_by_points[safety_rank - 1][1]["points"] if len(sorted_by_points) >= safety_rank else 0
+        diff = safety_points - points
+        if diff <= 3:
+            return "强", MOTIVATION_SCORE["强"], f"保级边缘（排名第{rank}，距安全线{diff}分）"
+    
+    # 弱战意：赛季末，排名中游且无欲无求，且与上下线分差都>8分
+    if current_round >= total_rounds - 4:
+        if 8 <= rank <= total_teams - 6:
+            # 确认距离欧战区和保级区都很远
+            if rank > europa_line + 2 and rank < safety_rank - 1:
+                return "弱", MOTIVATION_SCORE["弱"], "赛季末无欲无求"
+    
+    return "正常", 0, "中游正常战意"
+
+def apply_motivation_adjustment(home_team, away_team, fused_probs, standings, league, current_round):
+    """
+    应用战意修正
+    返回：(修正后概率, 修正说明, 主战意, 客战意)
+    """
+    home_level, home_score, home_desc = get_motivation(home_team, standings, league, current_round)
+    away_level, away_score, away_desc = get_motivation(away_team, standings, league, current_round)
+    
+    motivation_diff = home_score - away_score
+    
+    # 战意差为0，不修正
+    if motivation_diff == 0:
+        return fused_probs.copy(), "双方战意相当，不修正", home_level, away_level
+    
+    # 赛季阶段系数
+    total_rounds = LEAGUE_TOTAL_ROUNDS.get(league, 38)
+    if current_round <= 5:
+        season_factor = 0.3
+    elif current_round >= total_rounds - 4:
+        season_factor = 1.5
+    else:
+        season_factor = 1.0
+    
+    # 数据完整性校验：赛季过半前降低修正
+    if current_round < total_rounds * 0.5:
+        season_factor *= 0.5
+    
+    # 按战意差分档给基础修正系数
+    abs_diff = abs(motivation_diff)
+    if abs_diff >= 25:
+        base_home_factor = 1.05 if motivation_diff > 0 else 0.95
+        base_away_factor = 0.95 if motivation_diff > 0 else 1.05
+        draw_factor = 0.98
+    elif abs_diff >= 10:
+        base_home_factor = 1.03 if motivation_diff > 0 else 0.97
+        base_away_factor = 0.97 if motivation_diff > 0 else 1.03
+        draw_factor = 1.0
+    else:
+        return fused_probs.copy(), "战意差异较小，不修正", home_level, away_level
+    
+    # 应用赛季阶段系数（系数向1.0靠拢）
+    home_factor = 1.0 + (base_home_factor - 1.0) * season_factor
+    away_factor = 1.0 + (base_away_factor - 1.0) * season_factor
+    draw_factor_adj = 1.0 + (draw_factor - 1.0) * season_factor
+    
+    # 应用修正
+    adjusted = [
+        fused_probs[0] * home_factor,
+        fused_probs[1] * draw_factor_adj,
+        fused_probs[2] * away_factor
+    ]
+    
+    # 重新归一化
+    total = sum(adjusted)
+    adjusted = [p / total for p in adjusted]
+    
+    # 上限保护：单场概率变化不超过±3%
+    max_change = max(abs(adjusted[i] - fused_probs[i]) for i in range(3))
+    if max_change > 0.03:
+        scale = 0.03 / max_change
+        adjusted = [
+            fused_probs[i] + (adjusted[i] - fused_probs[i]) * scale
+            for i in range(3)
+        ]
+        total = sum(adjusted)
+        adjusted = [p / total for p in adjusted]
+    
+    # 生成修正说明
+    home_change = (adjusted[0] - fused_probs[0]) * 100
+    away_change = (adjusted[2] - fused_probs[2]) * 100
+    
+    if home_change > 0:
+        desc = f"主队{home_level}战意，客队{away_level}战意，主胜概率上调{home_change:.1f}%"
+    else:
+        desc = f"主队{home_level}战意，客队{away_level}战意，主胜概率下调{abs(home_change):.1f}%"
+    
+    return adjusted, desc, home_level, away_level
+
 # ========== 主报告生成函数 ==========
 def generate_report():
     if not os.path.exists("data/matches.csv"):
@@ -704,6 +935,9 @@ def generate_report():
     elo_cache = {}
     league_df_cache = {}
     data_sufficient_cache = {}
+    standings_cache = {}
+    current_round_cache = {}
+    
     for league in LEAGUES:
         if "league" in all_matches_df.columns:
             league_df = all_matches_df[all_matches_df["league"] == league].copy()
@@ -712,6 +946,13 @@ def generate_report():
         league_df_cache[league] = league_df
         elo_cache[league] = load_or_calculate_elo(league_df, league)
         data_sufficient_cache[league] = len(league_df) >= 10
+        
+        # 预计算积分榜和当前轮次
+        standings = calculate_league_standings(league_df, league)
+        standings_cache[league] = standings
+        current_round_cache[league] = get_current_round(standings, league)
+        if standings:
+            print(f"📊 {LEAGUE_NAMES.get(league, league)} 积分榜计算完成，共{len(standings)}支球队，当前约第{current_round_cache[league]}轮")
     
     # ========== 第一步：预计算所有比赛数据 ==========
     match_results = []
@@ -725,6 +966,8 @@ def generate_report():
         data_sufficient = data_sufficient_cache.get(league, False)
         league_name = LEAGUE_NAMES.get(league, league)
         params = LEAGUE_PARAMS.get(league, LEAGUE_PARAMS["PL"])
+        standings = standings_cache.get(league, {})
+        current_round = current_round_cache.get(league, 1)
         
         try:
             home_en = match["home_team"]
@@ -779,12 +1022,17 @@ def generate_report():
             fused_home /= total_fused
             fused_draw /= total_fused
             fused_away /= total_fused
-            fused_probs = [fused_home, fused_draw, fused_away]
+            fused_probs_raw = [fused_home, fused_draw, fused_away]
+            
+            # ========== 新增：战意修正 ==========
+            fused_probs, motivation_desc, home_motivation, away_motivation = apply_motivation_adjustment(
+                home_en, away_en, fused_probs_raw, standings, league, current_round
+            )
             
             grade_info = grade_match(fused_probs, odds_data)
             full_dir_idx = grade_info["dir_idx"]
             
-            # ========== Bug1修复：自动识别强队 + 稳胆阈值55% ==========
+            # 让球盘：自动识别强队
             if fused_probs[0] >= fused_probs[2]:
                 favorite_team = "home"
                 favorite_name = home_zh
@@ -800,7 +1048,7 @@ def generate_report():
                 "win_prob": h_win,
                 "draw_prob": h_draw,
                 "lose_prob": h_lose,
-                "is_steady": h_win >= 0.55  # 阈值从60%下调到55%
+                "is_steady": h_win >= 0.55
             }
             
             hf_combos = calculate_hf_combos(
@@ -844,6 +1092,7 @@ def generate_report():
                 "p_market": p_market,
                 "p_elo": p_elo,
                 "fused_probs": fused_probs,
+                "fused_probs_raw": fused_probs_raw,
                 "grade_info": grade_info,
                 "handicap": handicap_info,
                 "hf_combos": hf_combos,
@@ -852,7 +1101,10 @@ def generate_report():
                 "divergence": divergence,
                 "model_consistent": model_consistent,
                 "odds_data": odds_data,
-                "data_sufficient": data_sufficient
+                "data_sufficient": data_sufficient,
+                "motivation_desc": motivation_desc,
+                "home_motivation": home_motivation,
+                "away_motivation": away_motivation
             }
             match_results.append(result)
             match_counter += 1
@@ -866,16 +1118,16 @@ def generate_report():
     now_bj = datetime.utcnow() + timedelta(hours=8)
     report = ""
     
-    report += "# 足球预测报告（全面修复版）\n\n"
+    report += "# 足球预测报告（战意系数版）\n\n"
     report += f"**生成时间**：{now_bj.strftime('%Y-%m-%d %H:%M:%S')}（北京时间）\n"
     report += f"**预测时段**：{TARGET_DATE_LABEL} 17:00 ~ 次日 12:00\n"
     report += f"**数据来源**：Football-Data.org + The Odds API + ELO\n"
     
     has_any_odds = any(r["odds_data"] for r in match_results)
     if has_any_odds:
-        model_desc = "泊松模型（DC修正+联赛校准） + 全庄家赔率中位数 + ELO 在 logit 空间融合"
+        model_desc = "泊松模型（DC修正+联赛校准） + 全庄家赔率中位数 + ELO + 战意系数 在 logit 空间融合"
     else:
-        model_desc = "泊松模型（DC修正+联赛校准） + ELO（本期无赔率数据）"
+        model_desc = "泊松模型（DC修正+联赛校准） + ELO + 战意系数（本期无赔率数据）"
     report += f"**模型说明**：{model_desc}\n\n"
     
     report += "> ⚠️ 风险提示：所有预测仅供参考，不构成投注建议。足球比赛不确定性高，请理性购彩，量力而行。\n\n"
@@ -884,16 +1136,18 @@ def generate_report():
     ping_count = sum(1 for r in match_results if r["hf_combos"]["符合平系标准"])
     grade_a_count = sum(1 for r in match_results if r["grade_info"]["grade"] == "A档")
     grade_b_count = sum(1 for r in match_results if r["grade_info"]["grade"] == "B档")
+    motivation_adjusted = sum(1 for r in match_results if "不修正" not in r["motivation_desc"] and "较小" not in r["motivation_desc"])
     
     report += f"**本期概览**：共 {len(match_results)} 场比赛，覆盖 {'、'.join(leagues_covered)}；\n"
-    report += f"- A档强推：{grade_a_count} 场 | B档可买：{grade_b_count} 场 | 符合平系策略：{ping_count} 场\n\n"
+    report += f"- A档强推：{grade_a_count} 场 | B档可买：{grade_b_count} 场 | 符合平系策略：{ping_count} 场\n"
+    report += f"- 战意修正场次：{motivation_adjusted} 场（保级/争冠/欧战战意差异已纳入概率调整）\n\n"
     report += "---\n\n"
     
     # 总览汇总表
     report += "## 📋 总览汇总表\n\n"
     report += "💡 快速用法：直接筛「A档」比赛做主投，「B档」做串关，C档直接跳过。\n\n"
-    report += "| 编号 | 对阵 | 胜平负首选 | 档位 | 让球参考 | 半全场首选双选 | 总进球首选 |\n"
-    report += "|------|------|------------|------|----------|------------------|------------|\n"
+    report += "| 编号 | 对阵 | 胜平负首选 | 档位 | 让球参考 | 战意提示 | 半全场首选双选 | 总进球首选 |\n"
+    report += "|------|------|------------|------|----------|----------|------------------|------------|\n"
     
     for r in match_results:
         no = r["match_no"]
@@ -908,6 +1162,16 @@ def generate_report():
         else:
             hf_ref = "走盘风险高"
         
+        # 战意提示简写
+        if r["home_motivation"] == "强" and r["away_motivation"] == "弱":
+            mot_short = "主战意强"
+        elif r["home_motivation"] == "弱" and r["away_motivation"] == "强":
+            mot_short = "客战意强"
+        elif r["home_motivation"] == "强" and r["away_motivation"] == "强":
+            mot_short = "双方强战意"
+        else:
+            mot_short = "战意正常"
+        
         if r["hf_combos"]["首选"]:
             hf_first = r["hf_combos"]["首选"]["combo"]
         else:
@@ -915,7 +1179,7 @@ def generate_report():
         
         ttg_first = f"{r['top_ttg'][0][0]}球" if r["top_ttg"] else "-"
         
-        report += f"| {no} | {vs} | {first_dir} {first_prob} | {grade} | {hf_ref} | {hf_first} | {ttg_first} |\n"
+        report += f"| {no} | {vs} | {first_dir} {first_prob} | {grade} | {hf_ref} | {mot_short} | {hf_first} | {ttg_first} |\n"
     
     report += "\n---\n\n"
     
@@ -937,9 +1201,16 @@ def generate_report():
         
         # 一、单场胜平负
         report += "##### 一、单场胜平负（主力投注）\n\n"
-        report += "**融合最终概率**\n"
+        report += "**融合最终概率（含战意修正）**\n"
         report += "| 主胜 | 平局 | 客胜 |\n|---|---:|---:|\n"
         report += f"| {r['fused_probs'][0]:.1%} | {r['fused_probs'][1]:.1%} | {r['fused_probs'][2]:.1%} |\n\n"
+        
+        # 战意修正说明
+        report += f"> ⚔️ **战意提示**：{r['motivation_desc']}\n"
+        if "不修正" not in r["motivation_desc"] and "较小" not in r["motivation_desc"]:
+            raw = r["fused_probs_raw"]
+            report += f">   修正前：主胜{raw[0]:.1%} / 平局{raw[1]:.1%} / 客胜{raw[2]:.1%}\n"
+        report += "\n"
         
         g = r["grade_info"]
         report += f"**概率档位**：{g['prob_grade']}（{g['direction']} {g['max_prob']:.1%}）\n"
@@ -1107,7 +1378,6 @@ def generate_report():
     steady_handicap = [r for r in match_results if r["handicap"]["is_steady"] and r["odds_data"]]
     ping_qualified = [r for r in match_results if r["hf_combos"]["符合平系标准"] and r["hf_combos"]["首选"]]
     
-    # ========== Bug4修复：串关全部填充，无空场 ==========
     report += "### （1）稳健串（低风险 · 推荐主力）\n\n"
     report += "> 选场规则：单场A/B档比赛，优先跨联赛搭配；总赔率区间：2.4~3.2\n\n"
     
@@ -1236,7 +1506,8 @@ def generate_report():
     report += "### 4. 串关资源\n"
     report += f"- B档以上可串比赛：{len(ab_grade)} 场\n"
     report += f"- 让球稳胆场次：{len(steady_handicap)} 场\n"
-    report += f"- 符合平系策略场次：{ping_count} 场\n\n"
+    report += f"- 符合平系策略场次：{ping_count} 场\n"
+    report += f"- 战意修正场次：{motivation_adjusted} 场\n\n"
     
     report += "---\n\n"
     
@@ -1244,6 +1515,7 @@ def generate_report():
     report += "## 📚 附录：术语大白话对照表\n\n"
     report += "| 术语 | 大白话解释 |\n|------|------------|\n"
     report += "| 融合概率 | 多个模型综合算出的结果发生概率，数值越高越容易中 |\n"
+    report += "| 战意系数 | 根据球队排名/分差判断拼命程度，保级/争冠队概率小幅上调，无欲无求队小幅下调 |\n"
     report += "| EV（期望收益） | 长期反复买这个选项，平均每100块能赚多少钱；正数=长期赚，负数=长期亏 |\n"
     report += "| SP赔率 | 中了之后的赔付倍数，比如SP=4.0就是投100中了拿400 |\n"
     report += "| 让球盘 | 强队让弱队1球之后再算胜平负，用来平衡强弱差距 |\n"
@@ -1272,6 +1544,8 @@ def generate_report():
                 "ev": r["grade_info"]["ev"],
                 "ht_draw_prob": r["hf_combos"]["半场平概率"],
                 "ping_standard": r["hf_combos"]["符合平系标准"],
+                "home_motivation": r["home_motivation"],
+                "away_motivation": r["away_motivation"],
                 "status": "pending"
             }
             records.append(record)
@@ -1291,7 +1565,7 @@ def generate_report():
     os.makedirs("docs", exist_ok=True)
     with open("docs/index.md", "w", encoding="utf-8") as f:
         f.write(report)
-    print(f"📄 全面修复版报告已生成")
+    print(f"📄 战意系数版报告已生成")
 
 if __name__ == "__main__":
     generate_report()
