@@ -50,7 +50,8 @@ LEAGUE_TEAM_COUNT = {"PL": 20, "PD": 20, "BL1": 18, "SA": 20, "FL1": 20}
 LEAGUE_EUROPA_LINE = {"PL": 6, "PD": 6, "BL1": 6, "SA": 6, "FL1": 4}
 
 MOTIVATION_SCORE = {"强": 15, "正常": 0, "弱": -10}
-PING_STANDARD_THRESHOLD = 0.48
+PING_STRICT_THRESHOLD = 0.48
+PING_BALANCED_THRESHOLD = 0.44
 
 TEAM_NAMES_ZH = {
     "Manchester City FC": "曼城", "Arsenal FC": "阿森纳", "Liverpool FC": "利物浦", "Chelsea FC": "切尔西",
@@ -154,13 +155,7 @@ def poisson_prob_matrix(lambda_home, lambda_away, max_goals=8):
     matrix /= matrix.sum()
     return matrix
 
-# ========== 新增：多档让球计算辅助函数 ==========
 def calc_handicap_probs(matrix, handicap_goals, favorite_is_home=True):
-    """
-    计算指定让球数下，强队视角的赢盘/走盘/输盘概率。
-    handicap_goals: 0, 0.5, 1.0, 1.5, 2.0
-    favorite_is_home: True=主队让球，False=客队让球
-    """
     win, draw, lose = 0.0, 0.0, 0.0
     for i in range(matrix.shape[0]):
         for j in range(matrix.shape[1]):
@@ -210,27 +205,35 @@ def match_probabilities(lambda_home, lambda_away, half_ratio=0.44):
     }
     top_htft = sorted(htft_probs.items(), key=lambda x: x[1], reverse=True)[:3]
     
-    # ===== 多档让球自动选盘（0/0.5/1/1.5/2球五档） =====
+    # ===== 多档让球（0.5/1/1.5/2，去掉0球） =====
     favorite_is_home = lambda_home >= lambda_away
-    handicap_levels = [0, 0.5, 1.0, 1.5, 2.0]
+    handicap_levels = [0.5, 1.0, 1.5, 2.0]
     handicap_all = {}
     for level in handicap_levels:
         h_win, h_draw, h_lose = calc_handicap_probs(matrix, level, favorite_is_home)
         handicap_all[level] = (h_win, h_draw, h_lose)
-    # 选强队赢盘概率最接近50%的档位（最接近真实盘口）
-    best_level = min(handicap_levels, key=lambda l: abs(handicap_all[l][0] - 0.5))
-    h_win, h_draw, h_lose = handicap_all[best_level]
     
-    handicap = {
-        "favorite": "home" if favorite_is_home else "away",
-        "handicap_goals": best_level,
-        "win_prob": h_win,
-        "draw_prob": h_draw,
-        "lose_prob": h_lose,
-        "all_levels": handicap_all,
-        "is_steady": h_win >= 0.45,
-        "is_strong_steady": h_win >= 0.50,
-    }
+    # 如果让0.5球强队赢盘概率<40%，说明双方实力接近，平手盘
+    if handicap_all[0.5][0] < 0.40:
+        handicap = {
+            "favorite": "home" if favorite_is_home else "away",
+            "handicap_goals": None,
+            "is_draw_handicap": True,
+            "win_prob": 0, "draw_prob": 0, "lose_prob": 0,
+            "all_levels": handicap_all,
+            "is_steady": False, "is_strong_steady": False,
+        }
+    else:
+        best_level = min(handicap_levels, key=lambda l: abs(handicap_all[l][0] - 0.5))
+        h_win, h_draw, h_lose = handicap_all[best_level]
+        handicap = {
+            "favorite": "home" if favorite_is_home else "away",
+            "handicap_goals": best_level,
+            "is_draw_handicap": False,
+            "win_prob": h_win, "draw_prob": h_draw, "lose_prob": h_lose,
+            "all_levels": handicap_all,
+            "is_steady": h_win >= 0.45, "is_strong_steady": h_win >= 0.50,
+        }
     
     total_goals = {}
     for i in range(matrix.shape[0]):
@@ -351,17 +354,21 @@ def grade_match(fused_probs, odds_data):
     odds_comment = "无赔率数据"
     final_grade = grade
     ev = None
+    is_low_odds = False
     if odds_data:
         rec_odds = odds_data[dir_idx]
         ev = max_prob * rec_odds - 1
-        if 1.50 <= rec_odds <= 2.20:
-            odds_comment = "✅ 赔率合理"
-        elif 1.30 <= rec_odds < 1.50:
+        if rec_odds <= 1.30:
+            is_low_odds = True
+            odds_comment = "⚠️ 赔率过低，无单场投注价值"
+        elif 1.30 < rec_odds <= 1.50:
             odds_comment = "⚠️ 赔率偏低"
             if max_prob < 0.55 and grade == "A档":
                 final_grade = "B档"
             elif grade in ["B档", "C档"]:
                 final_grade = "C档" if grade == "B档" else "不推荐"
+        elif 1.50 < rec_odds <= 2.20:
+            odds_comment = "✅ 赔率合理"
         elif 2.20 < rec_odds <= 3.00:
             odds_comment = "⚠️ 赔率偏高"
             if max_prob < 0.50:
@@ -373,12 +380,22 @@ def grade_match(fused_probs, odds_data):
     return {
         "direction": dir_name, "dir_idx": dir_idx, "max_prob": max_prob,
         "prob_grade": prob_grade, "grade": final_grade, "odds_comment": odds_comment,
-        "ev": ev, "rec_odds": odds_data[dir_idx] if odds_data else None
+        "ev": ev, "rec_odds": odds_data[dir_idx] if odds_data else None,
+        "is_low_odds": is_low_odds
     }
 
 def calculate_hf_combos(htft_probs, ht_draw_prob, full_dir_idx, odds_data=None):
-    ping_combos = {"平平": htft_probs["平平"], "平胜": htft_probs["平胜"], "平负": htft_probs["平负"]}
+    # 场类型判断
+    if ht_draw_prob >= PING_STRICT_THRESHOLD:
+        ping_type = "严格平系"
+    elif ht_draw_prob >= PING_BALANCED_THRESHOLD:
+        ping_type = "均衡平系"
+    else:
+        ping_type = "非平系"
+    
+    # SP估算：有赔率用赔率推导，无赔率用概率×0.85估算
     sp_est = {}
+    sp_is_estimated = False
     if odds_data:
         h_odds, d_odds, a_odds = odds_data
         sp_est["平平"] = d_odds * 1.8
@@ -386,6 +403,58 @@ def calculate_hf_combos(htft_probs, ht_draw_prob, full_dir_idx, odds_data=None):
         sp_est["平负"] = a_odds * 2.2
         sp_est["胜胜"] = h_odds * 1.6
         sp_est["负负"] = a_odds * 1.6
+        sp_est["胜平"] = d_odds * 1.5
+        sp_est["负平"] = d_odds * 1.5
+    else:
+        sp_is_estimated = True
+        for key in ["平平", "平胜", "平负", "胜胜", "负负", "胜平", "负平"]:
+            prob = htft_probs.get(key, 0.01)
+            sp_est[key] = (1 / prob) * 0.85 if prob > 0.01 else 50.0
+    
+    # 非平系场：按全场方向推荐，不硬推平平
+    if ping_type == "非平系":
+        if full_dir_idx == 0:  # 主胜
+            primary_options = [("胜胜", htft_probs["胜胜"]), ("平胜", htft_probs["平胜"])]
+            secondary_options = [("平平", htft_probs["平平"]), ("平胜", htft_probs["平胜"])]
+        elif full_dir_idx == 2:  # 客胜
+            primary_options = [("负负", htft_probs["负负"]), ("平负", htft_probs["平负"])]
+            secondary_options = [("平平", htft_probs["平平"]), ("平负", htft_probs["平负"])]
+        else:  # 平局
+            primary_options = [("平平", htft_probs["平平"]), ("胜平", htft_probs["胜平"])]
+            secondary_options = [("平平", htft_probs["平平"]), ("负平", htft_probs["负平"])]
+        
+        def build_combo(options):
+            name1, prob1 = options[0]
+            name2, prob2 = options[1]
+            total_prob = prob1 + prob2
+            sp1 = sp_est.get(name1, 0)
+            sp2 = sp_est.get(name2, 0)
+            ev = (prob1 * sp1 + prob2 * sp2) - 2
+            ev_pct = ev / 2 * 100
+            return {
+                "combo": f"{name1} + {name2}",
+                "total_prob": total_prob,
+                "sp": f"{sp1:.2f} / {sp2:.2f}" + ("（估算）" if sp_is_estimated else ""),
+                "sp_avg": (sp1 + sp2) / 2,
+                "ev_pct": ev_pct,
+            }
+        
+        first = build_combo(primary_options)
+        second = build_combo(secondary_options)
+        
+        result = {
+            "符合平系标准": False,
+            "半场平概率": ht_draw_prob,
+            "ping_type": ping_type,
+            "阈值": PING_BALANCED_THRESHOLD,
+        }
+        result["首选"] = first
+        result["次选"] = second
+        result["博弈备选"] = None
+        return result
+    
+    # 平系场（严格/均衡）：双选平平+平X
+    ping_combos = {"平平": htft_probs["平平"], "平胜": htft_probs["平胜"], "平负": htft_probs["平负"]}
     combos = []
     options = list(ping_combos.items())
     for i in range(len(options)):
@@ -393,14 +462,10 @@ def calculate_hf_combos(htft_probs, ht_draw_prob, full_dir_idx, odds_data=None):
             name1, prob1 = options[i]
             name2, prob2 = options[j]
             total_prob = prob1 + prob2
-            if odds_data and name1 in sp_est and name2 in sp_est:
-                sp1 = sp_est[name1]
-                sp2 = sp_est[name2]
-                ev = (prob1 * sp1 + prob2 * sp2) - 2
-                ev_pct = ev / 2 * 100
-            else:
-                ev = None
-                ev_pct = None
+            sp1 = sp_est.get(name1, 0)
+            sp2 = sp_est.get(name2, 0)
+            ev = (prob1 * sp1 + prob2 * sp2) - 2
+            ev_pct = ev / 2 * 100
             align_score = 0
             if full_dir_idx == 0:
                 if "平胜" in (name1, name2):
@@ -413,18 +478,15 @@ def calculate_hf_combos(htft_probs, ht_draw_prob, full_dir_idx, odds_data=None):
                     align_score = 100
             combos.append({
                 "combo": f"{name1} + {name2}", "total_prob": total_prob,
-                "sp": f"{sp_est.get(name1, 0):.2f} / {sp_est.get(name2, 0):.2f}" if sp_est else "无赔率数据，无法估算",
-                "sp_avg": (sp_est.get(name1, 0) + sp_est.get(name2, 0)) / 2 if sp_est else 0,
-                "ev_pct": ev_pct, "align_score": align_score
+                "sp": f"{sp1:.2f} / {sp2:.2f}" + ("（估算）" if sp_is_estimated else ""),
+                "sp_avg": (sp1 + sp2) / 2, "ev_pct": ev_pct, "align_score": align_score
             })
+    
     first_candidates = [c for c in combos if c["align_score"] == 100]
     first_candidates.sort(key=lambda x: x["total_prob"], reverse=True)
     first = first_candidates[0] if first_candidates else None
     second_candidates = [c for c in combos if c != first]
-    if odds_data:
-        second_candidates.sort(key=lambda x: x["ev_pct"] if x["ev_pct"] is not None else -999, reverse=True)
-    else:
-        second_candidates.sort(key=lambda x: x["total_prob"], reverse=True)
+    second_candidates.sort(key=lambda x: x["ev_pct"] if x["ev_pct"] is not None else -999, reverse=True)
     second = second_candidates[0] if second_candidates else None
     gamble = None
     for c in combos:
@@ -433,9 +495,12 @@ def calculate_hf_combos(htft_probs, ht_draw_prob, full_dir_idx, odds_data=None):
         if c["ev_pct"] is not None and -2 <= c["ev_pct"] < 0:
             gamble = c
             break
+    
     result = {
-        "符合平系标准": ht_draw_prob >= PING_STANDARD_THRESHOLD,
-        "半场平概率": ht_draw_prob, "阈值": PING_STANDARD_THRESHOLD
+        "符合平系标准": ht_draw_prob >= PING_BALANCED_THRESHOLD,
+        "半场平概率": ht_draw_prob,
+        "ping_type": ping_type,
+        "阈值": PING_STRICT_THRESHOLD,
     }
     result["首选"] = first
     result["次选"] = second
@@ -475,16 +540,31 @@ def build_hf_parlay(ping_list, combo_type="首选"):
     candidates.sort(key=lambda x: x["score"], reverse=True)
     return candidates[0]
 
-# ========== 战意系数模块 ==========
+# ========== 战意系数模块（赛季过滤版） ==========
 def calculate_league_standings(league_df, league):
     if league_df.empty:
-        return {}
-    if "status" in league_df.columns:
-        finished = league_df[league_df["status"].isin(["FINISHED", "finished", "已完赛"])]
+        return {}, 0
+    
+    # 赛季过滤：当前赛季定义为每年7月1日至次年6月30日
+    now = datetime.now()
+    if now.month >= 7:
+        season_start = datetime(now.year, 7, 1)
     else:
-        finished = league_df.copy()
+        season_start = datetime(now.year - 1, 7, 1)
+    
+    df = league_df.copy()
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df = df[df["date"] >= season_start]
+    
+    season_match_count = len(df)
+    
+    if "status" in df.columns:
+        finished = df[df["status"].isin(["FINISHED", "finished", "已完赛"])]
+    else:
+        finished = df.copy()
     if finished.empty:
-        return {}
+        return {}, season_match_count
     team_stats = {}
     for _, row in finished.iterrows():
         home = row.get("home_team", "")
@@ -514,7 +594,7 @@ def calculate_league_standings(league_df, league):
     sorted_teams = sorted(team_stats.items(), key=lambda x: (x[1]["points"], x[1]["gd"]), reverse=True)
     for rank, (team, _) in enumerate(sorted_teams, 1):
         team_stats[team]["rank"] = rank
-    return team_stats
+    return team_stats, season_match_count
 
 def get_current_round(standings, league):
     if not standings:
@@ -522,7 +602,7 @@ def get_current_round(standings, league):
     avg_played = np.mean([s["played"] for s in standings.values()])
     return max(1, round(avg_played))
 
-def get_motivation(team, standings, league, current_round):
+def get_motivation(team, standings, league, current_round, season_data_sufficient=True):
     if team not in standings:
         return "正常", 0, "无积分榜数据"
     info = standings[team]
@@ -532,6 +612,8 @@ def get_motivation(team, standings, league, current_round):
     total_rounds = LEAGUE_TOTAL_ROUNDS.get(league, 38)
     if current_round <= 5:
         return "正常", 0, "赛季初，战意参考价值低"
+    if not season_data_sufficient:
+        return "正常", 0, "赛季数据不足，战意参考价值低"
     sorted_by_points = sorted(standings.items(), key=lambda x: x[1]["points"], reverse=True)
     top_points = sorted_by_points[0][1]["points"] if sorted_by_points else 0
     if rank <= 4 and (top_points - points) <= 5:
@@ -560,9 +642,9 @@ def get_motivation(team, standings, league, current_round):
                 return "弱", MOTIVATION_SCORE["弱"], "赛季末无欲无求"
     return "正常", 0, "中游正常战意"
 
-def apply_motivation_adjustment(home_team, away_team, fused_probs, standings, league, current_round):
-    home_level, home_score, home_desc = get_motivation(home_team, standings, league, current_round)
-    away_level, away_score, away_desc = get_motivation(away_team, standings, league, current_round)
+def apply_motivation_adjustment(home_team, away_team, fused_probs, standings, league, current_round, season_data_sufficient=True):
+    home_level, home_score, home_desc = get_motivation(home_team, standings, league, current_round, season_data_sufficient)
+    away_level, away_score, away_desc = get_motivation(away_team, standings, league, current_round, season_data_sufficient)
     motivation_diff = home_score - away_score
     if motivation_diff == 0:
         return fused_probs.copy(), "双方战意相当，不修正", home_level, away_level
@@ -574,6 +656,8 @@ def apply_motivation_adjustment(home_team, away_team, fused_probs, standings, le
     else:
         season_factor = 1.0
     if current_round < total_rounds * 0.5:
+        season_factor *= 0.5
+    if not season_data_sufficient:
         season_factor *= 0.5
     abs_diff = abs(motivation_diff)
     if abs_diff >= 25:
@@ -636,6 +720,7 @@ def generate_report():
     data_sufficient_cache = {}
     standings_cache = {}
     current_round_cache = {}
+    season_match_count_cache = {}
     for league in LEAGUES:
         if "league" in all_matches_df.columns:
             league_df = all_matches_df[all_matches_df["league"] == league].copy()
@@ -644,11 +729,13 @@ def generate_report():
         league_df_cache[league] = league_df
         elo_cache[league] = load_or_calculate_elo(league_df, league)
         data_sufficient_cache[league] = len(league_df) >= 10
-        standings = calculate_league_standings(league_df, league)
+        standings, season_count = calculate_league_standings(league_df, league)
         standings_cache[league] = standings
+        season_match_count_cache[league] = season_count
         current_round_cache[league] = get_current_round(standings, league)
+        season_data_sufficient = season_count >= 50
         if standings:
-            print(f"📊 {LEAGUE_NAMES.get(league, league)} 积分榜计算完成，共{len(standings)}支球队，当前约第{current_round_cache[league]}轮")
+            print(f"📊 {LEAGUE_NAMES.get(league, league)} 当前赛季已完赛{season_count}场，积分榜{len(standings)}队，约第{current_round_cache[league]}轮，数据{'充足' if season_data_sufficient else '不足'}")
     
     match_results = []
     match_counter = 1
@@ -662,6 +749,7 @@ def generate_report():
         params = LEAGUE_PARAMS.get(league, LEAGUE_PARAMS["PL"])
         standings = standings_cache.get(league, {})
         current_round = current_round_cache.get(league, 1)
+        season_data_sufficient = season_match_count_cache.get(league, 0) >= 50
         try:
             home_en = match["home_team"]
             away_en = match["away_team"]
@@ -703,16 +791,35 @@ def generate_report():
             fused_away /= total_fused
             fused_probs_raw = [fused_home, fused_draw, fused_away]
             fused_probs, motivation_desc, home_motivation, away_motivation = apply_motivation_adjustment(
-                home_en, away_en, fused_probs_raw, standings, league, current_round
+                home_en, away_en, fused_probs_raw, standings, league, current_round, season_data_sufficient
             )
             grade_info = grade_match(fused_probs, odds_data)
             full_dir_idx = grade_info["dir_idx"]
             handicap = poisson_probs["handicap"]
             if handicap["favorite"] == "home":
                 favorite_name = home_zh
+                poisson_fav_win = poisson_probs["home_win"]
+                fused_fav_win = fused_probs[0]
             else:
                 favorite_name = away_zh
+                poisson_fav_win = poisson_probs["away_win"]
+                fused_fav_win = fused_probs[2]
             handicap["favorite_name"] = favorite_name
+            
+            # 让球盘概率按融合概率校准
+            if not handicap.get("is_draw_handicap") and poisson_fav_win > 0:
+                calibrate_factor = fused_fav_win / poisson_fav_win
+                calibrated_win = handicap["win_prob"] * calibrate_factor
+                if 0 < calibrated_win < 1:
+                    remaining = 1 - calibrated_win
+                    total_other = handicap["draw_prob"] + handicap["lose_prob"]
+                    if total_other > 0:
+                        handicap["draw_prob"] = handicap["draw_prob"] / total_other * remaining
+                        handicap["lose_prob"] = handicap["lose_prob"] / total_other * remaining
+                        handicap["win_prob"] = calibrated_win
+                        handicap["is_steady"] = handicap["win_prob"] >= 0.45
+                        handicap["is_strong_steady"] = handicap["win_prob"] >= 0.50
+            
             hf_combos = calculate_hf_combos(poisson_probs["htft_probs"], poisson_probs["ht_draw_prob"], full_dir_idx, odds_data)
             top_ttg = sorted(poisson_probs["total_goals"], key=lambda x: x[1], reverse=True)[:3]
             divergence = None
@@ -750,63 +857,163 @@ def generate_report():
     
     now_bj = datetime.utcnow() + timedelta(hours=8)
     report = ""
-    report += "# 足球预测报告（多档让球+战意系数版）\n\n"
+    report += "# 足球预测报告（全面修复版）\n\n"
     report += f"**生成时间**：{now_bj.strftime('%Y-%m-%d %H:%M:%S')}（北京时间）\n"
     report += f"**预测时段**：{TARGET_DATE_LABEL} 17:00 ~ 次日 12:00\n"
     report += f"**数据来源**：Football-Data.org + The Odds API + ELO\n"
     has_any_odds = any(r["odds_data"] for r in match_results)
     if has_any_odds:
-        model_desc = "泊松模型（DC修正+联赛校准） + 全庄家赔率中位数 + ELO + 战意系数 + 多档让球自动选盘"
+        model_desc = "泊松模型（DC修正+联赛校准） + 全庄家赔率中位数 + ELO + 战意系数（赛季过滤） + 多档让球（0.5/1/1.5/2） + 分级平系策略"
     else:
-        model_desc = "泊松模型（DC修正+联赛校准） + ELO + 战意系数 + 多档让球自动选盘（本期无赔率数据）"
+        model_desc = "泊松模型（DC修正+联赛校准） + ELO + 战意系数（赛季过滤） + 多档让球 + 分级平系策略（本期无赔率数据）"
     report += f"**模型说明**：{model_desc}\n\n"
     report += "> ⚠️ 风险提示：所有预测仅供参考，不构成投注建议。足球比赛不确定性高，请理性购彩，量力而行。\n\n"
+    
+    # EV说明
+    report += "> 📊 **EV参考说明**：足球博彩中绝大多数选项EV为负（庄家抽水约10%-15%），属正常现象。EV参考标准：≥0% 价值高，-5%~0% 价值正常，-15%~-5% 价值偏低，<-15% 价值低不建议介入。EV仅作辅助参考，核心看概率与赔率的平衡。\n\n"
+    # SP说明
+    report += "> 💰 **SP赔率说明**：有真实赔率的场次基于赔率推导，无真实赔率的场次用模型概率估算（×0.85抽水系数），均标注「估算」，仅供参考。\n\n"
+    
     leagues_covered = set(r["league_name"] for r in match_results)
-    ping_count = sum(1 for r in match_results if r["hf_combos"]["符合平系标准"])
+    ping_strict_count = sum(1 for r in match_results if r["hf_combos"].get("ping_type") == "严格平系")
+    ping_balanced_count = sum(1 for r in match_results if r["hf_combos"].get("ping_type") == "均衡平系")
     grade_a_count = sum(1 for r in match_results if r["grade_info"]["grade"] == "A档")
     grade_b_count = sum(1 for r in match_results if r["grade_info"]["grade"] == "B档")
     motivation_adjusted = sum(1 for r in match_results if "不修正" not in r["motivation_desc"] and "较小" not in r["motivation_desc"])
-    steady_count = sum(1 for r in match_results if r["handicap"]["is_steady"])
-    strong_steady_count = sum(1 for r in match_results if r["handicap"]["is_strong_steady"])
+    steady_count = sum(1 for r in match_results if r["handicap"]["is_steady"] and not r["handicap"].get("is_draw_handicap"))
+    strong_steady_count = sum(1 for r in match_results if r["handicap"]["is_strong_steady"] and not r["handicap"].get("is_draw_handicap"))
+    draw_handicap_count = sum(1 for r in match_results if r["handicap"].get("is_draw_handicap"))
+    
     report += f"**本期概览**：共 {len(match_results)} 场比赛，覆盖 {'、'.join(leagues_covered)}；\n"
-    report += f"- A档强推：{grade_a_count} 场 | B档可买：{grade_b_count} 场 | 符合平系策略：{ping_count} 场\n"
-    report += f"- 让球稳胆：{steady_count} 场（含强稳胆{strong_steady_count}场） | 战意修正场次：{motivation_adjusted} 场\n\n"
+    report += f"- A档强推：{grade_a_count} 场 | B档可买：{grade_b_count} 场\n"
+    report += f"- 平系策略：严格场 {ping_strict_count} 场 | 均衡场 {ping_balanced_count} 场\n"
+    report += f"- 让球稳胆：{steady_count} 场（强稳胆{strong_steady_count}场） | 平手盘无让球参考：{draw_handicap_count} 场\n"
+    report += f"- 战意修正场次：{motivation_adjusted} 场（赛季过滤后）\n\n"
+    report += "---\n\n"
+    
+    # ===== 今日最终推荐 =====
+    report += "## 🎯 今日最终推荐（直接看这里）\n\n"
+    
+    # 稳健二串一推荐
+    report += "### 一、稳健二串一推荐\n\n"
+    ab_grade_for_parlay = [r for r in match_results 
+                           if r["grade_info"]["grade"] in ["A档", "B档"] 
+                           and r["odds_data"] 
+                           and r["grade_info"]["rec_odds"] >= 1.40
+                           and not r["grade_info"]["is_low_odds"]]
+    
+    parlay_combos = []
+    for i in range(len(ab_grade_for_parlay)):
+        for j in range(i+1, len(ab_grade_for_parlay)):
+            r1 = ab_grade_for_parlay[i]
+            r2 = ab_grade_for_parlay[j]
+            total_odds = r1["grade_info"]["rec_odds"] * r2["grade_info"]["rec_odds"]
+            total_prob = r1["grade_info"]["max_prob"] * r2["grade_info"]["max_prob"]
+            # 评分：赔率在2.4-3.2最优，跨联赛加分，命中率加分
+            score = 0
+            if 2.4 <= total_odds <= 3.2:
+                score += 100
+            elif 2.2 <= total_odds < 2.4 or 3.2 < total_odds <= 3.5:
+                score += 60
+            else:
+                score += 20
+            if r1["league"] != r2["league"]:
+                score += 50
+            score += total_prob * 50
+            parlay_combos.append({
+                "r1": r1, "r2": r2, "total_odds": total_odds,
+                "total_prob": total_prob, "score": score
+            })
+    
+    parlay_combos.sort(key=lambda x: x["score"], reverse=True)
+    top_parlays = parlay_combos[:3]
+    
+    if top_parlays:
+        report += "| 组合 | 对阵1 | 选项 | 档位 | 赔率 | 对阵2 | 选项 | 档位 | 赔率 | 总赔率 | 综合命中率 | 推荐理由 |\n"
+        report += "|---|---|---|---|---|---|---|---|---|---|---|---|\n"
+        for idx, pc in enumerate(top_parlays, 1):
+            r1 = pc["r1"]
+            r2 = pc["r2"]
+            reasons = []
+            if r1["league"] != r2["league"]:
+                reasons.append("跨联赛")
+            if 2.4 <= pc["total_odds"] <= 3.2:
+                reasons.append("赔率黄金区间")
+            elif 2.2 <= pc["total_odds"] <= 3.5:
+                reasons.append("赔率合理区间")
+            if r1["model_consistent"] and r2["model_consistent"]:
+                reasons.append("双场模型一致")
+            reason_str = "、".join(reasons)
+            report += f"| 组合{idx} | {r1['home_zh']}vs{r1['away_zh']} | {r1['grade_info']['direction']} | {r1['grade_info']['grade']} | {r1['grade_info']['rec_odds']:.2f} | {r2['home_zh']}vs{r2['away_zh']} | {r2['grade_info']['direction']} | {r2['grade_info']['grade']} | {r2['grade_info']['rec_odds']:.2f} | {pc['total_odds']:.2f} | 约{pc['total_prob']:.0%} | {reason_str} |\n"
+        report += "\n"
+    else:
+        report += "> 📌 今日无符合赔率要求（单场≥1.40）的稳健串关组合，建议单场投注或休息。\n\n"
+    
+    # 平系半全场推荐
+    report += "### 二、平系半全场推荐（平平+平X双选）\n\n"
+    ping_candidates = [r for r in match_results 
+                      if r["hf_combos"].get("ping_type") in ["严格平系", "均衡平系"]
+                      and r["hf_combos"]["首选"]]
+    
+    ping_candidates.sort(key=lambda r: r["hf_combos"]["首选"]["total_prob"] * r["hf_combos"]["首选"]["sp_avg"], reverse=True)
+    top_ping = ping_candidates[:3]
+    
+    if top_ping:
+        report += "| 编号 | 对阵 | 组合 | 半场平概率 | 场类型 | 双选概率 | 估算SP | 期望收益 | 推荐理由 |\n"
+        report += "|---|---|---|---|---|---|---|---|---|\n"
+        for idx, r in enumerate(top_ping, 1):
+            c = r["hf_combos"]["首选"]
+            ping_type = r["hf_combos"].get("ping_type", "")
+            reasons = []
+            reasons.append(f"半场平{r['hf_combos']['半场平概率']:.0%}")
+            dir_name = r["grade_info"]["direction"]
+            if "平胜" in c["combo"] and dir_name == "主胜":
+                reasons.append("主胜方向对齐")
+            elif "平负" in c["combo"] and dir_name == "客胜":
+                reasons.append("客胜方向对齐")
+            if c["ev_pct"] is not None and c["ev_pct"] > -10:
+                reasons.append(f"EV{c['ev_pct']:+.0f}%")
+            reason_str = "、".join(reasons)
+            ev_str = f"{c['ev_pct']:+.1f}%" if c["ev_pct"] is not None else "-"
+            report += f"| H{idx} | {r['home_zh']}vs{r['away_zh']} | {c['combo']} | {r['hf_combos']['半场平概率']:.1%} | {ping_type} | {c['total_prob']:.1%} | {c['sp_avg']:.2f} | {ev_str} | {reason_str} |\n"
+        report += "\n"
+        report += "> 💡 平系双选说明：单场双选概率约30%-40%，通过严格择赛（半场平概率≥44%）提升长期命中率。严格场置信度更高，均衡场次之。\n\n"
+    else:
+        report += "> 📌 今日无符合平系标准（半场平≥44%）的半全场推荐。\n\n"
+    
     report += "---\n\n"
     
     # 总览汇总表
     report += "## 📋 总览汇总表\n\n"
     report += "💡 快速用法：直接筛「A档」比赛做主投，「B档」做串关，C档直接跳过。\n\n"
-    report += "| 编号 | 对阵 | 胜平负首选 | 档位 | 让球参考 | 战意提示 | 半全场首选双选 | 总进球首选 |\n"
-    report += "|------|------|------------|------|----------|----------|------------------|------------|\n"
+    report += "| 编号 | 对阵 | 胜平负首选 | 档位 | 让球参考 | 平系类型 | 半全场首选 | 总进球首选 |\n"
+    report += "|------|------|------------|------|----------|----------|------------|------------|\n"
     for r in match_results:
         no = r["match_no"]
         vs = f"{r['home_zh']} vs {r['away_zh']}"
         first_dir = r["grade_info"]["direction"]
         first_prob = f"{r['grade_info']['max_prob']:.1%}"
         grade = r["grade_info"]["grade"]
+        if r["grade_info"]["is_low_odds"]:
+            grade += "（赔率低）"
         h = r["handicap"]
-        if h["is_strong_steady"]:
-            hf_ref = f"{h['favorite_name']}让{h['handicap_goals']}球 强稳"
+        if h.get("is_draw_handicap"):
+            hf_ref = "平手盘，无让球参考"
+        elif h["is_strong_steady"]:
+            hf_ref = f"{h['favorite_name']}让{h['handicap_goals']:g}球 强稳"
         elif h["is_steady"]:
-            hf_ref = f"{h['favorite_name']}让{h['handicap_goals']}球 稳"
+            hf_ref = f"{h['favorite_name']}让{h['handicap_goals']:g}球 稳"
         elif h["win_prob"] >= 0.40:
-            hf_ref = f"让{h['handicap_goals']}球 准稳"
+            hf_ref = f"让{h['handicap_goals']:g}球 准稳"
         else:
-            hf_ref = f"让{h['handicap_goals']}球 价值低"
-        if r["home_motivation"] == "强" and r["away_motivation"] == "弱":
-            mot_short = "主战意强"
-        elif r["home_motivation"] == "弱" and r["away_motivation"] == "强":
-            mot_short = "客战意强"
-        elif r["home_motivation"] == "强" and r["away_motivation"] == "强":
-            mot_short = "双方强战意"
-        else:
-            mot_short = "战意正常"
+            hf_ref = f"让{h['handicap_goals']:g}球 价值低"
+        ping_type = r["hf_combos"].get("ping_type", "")
         if r["hf_combos"]["首选"]:
             hf_first = r["hf_combos"]["首选"]["combo"]
         else:
             hf_first = "无推荐"
         ttg_first = f"{r['top_ttg'][0][0]}球" if r["top_ttg"] else "-"
-        report += f"| {no} | {vs} | {first_dir} {first_prob} | {grade} | {hf_ref} | {mot_short} | {hf_first} | {ttg_first} |\n"
+        report += f"| {no} | {vs} | {first_dir} {first_prob} | {grade} | {hf_ref} | {ping_type} | {hf_first} | {ttg_first} |\n"
     report += "\n---\n\n"
     
     # 单场深度分析
@@ -848,7 +1055,9 @@ def generate_report():
             reason_parts.append("泊松/ELO/市场三模型方向一致")
         else:
             reason_parts.append("模型存在分歧，已降档处理")
-        if g["rec_odds"] and 1.5 <= g["rec_odds"] <= 2.2:
+        if g["is_low_odds"]:
+            reason_parts.append("赔率过低，无单场投注价值，仅适合串关打底")
+        elif g["rec_odds"] and 1.5 <= g["rec_odds"] <= 2.2:
             reason_parts.append("赔率处于合理区间")
         elif g["rec_odds"] and g["rec_odds"] < 1.5:
             reason_parts.append("赔率偏低，已做降档校验")
@@ -857,7 +1066,9 @@ def generate_report():
             ev_sign = "正收益" if g["ev"] > 0 else "负收益"
             report += f"> 💡 **EV解读**：{g['ev']*100:+.1f}%（长期重复买入预期{ev_sign}，{abs(g['ev']*100):.1f}%/百本金）\n"
         report += "\n**建议仓位**："
-        if g["grade"] == "A档":
+        if g["is_low_odds"]:
+            report += "仅作串关稳胆，不建议单场投注"
+        elif g["grade"] == "A档":
             report += "主力仓位（占总资金30%-50%）"
         elif g["grade"] == "B档":
             report += "轻仓（占总资金10%-20%）"
@@ -867,41 +1078,50 @@ def generate_report():
             report += "不建议介入"
         report += "\n\n"
         
-        # 二、让球盘（多档自动选盘版）
+        # 二、让球盘
         h = r["handicap"]
-        handicap_text = f"{h['handicap_goals']:g}"
-        report += f"##### 二、让球盘（串关稳胆参考 · {h['favorite_name']}让{handicap_text}球）\n\n"
-        report += "> 📌 模型自动匹配盘口（强队赢盘概率最接近50%的档位），真实盘口以官方为准。\n\n"
-        report += "| 强队赢盘 | 走盘 | 弱队赢盘 |\n|---|---:|---:|\n"
-        if h["draw_prob"] > 0:
-            report += f"| {h['win_prob']:.1%} | {h['draw_prob']:.1%} | {h['lose_prob']:.1%} |\n\n"
+        if h.get("is_draw_handicap"):
+            report += "##### 二、让球盘\n\n"
+            report += "> 📌 双方实力接近（让0.5球强队赢盘概率<40%），真实盘口应为平手盘，无合适让球参考。建议直接参考胜平负。\n\n"
         else:
-            report += f"| {h['win_prob']:.1%} | - | {h['lose_prob']:.1%} |\n\n"
-        
-        if h["is_strong_steady"]:
-            steady_text = f"✅✅ 强稳胆，{h['favorite_name']}让{handicap_text}球后赢盘概率超50%，可重仓做串关打底"
-        elif h["is_steady"]:
-            steady_text = f"✅ 稳胆，{h['favorite_name']}让{handicap_text}球后赢盘概率超45%，可作串关打底"
-        elif h["win_prob"] >= 0.40:
-            steady_text = f"⚠️ 准稳胆，赢盘概率{h['win_prob']:.0%}（40%~45%），轻仓参考，注意走盘风险"
-        elif h["lose_prob"] >= 0.45:
-            steady_text = f"❌ 不推荐，{h['favorite_name']}让{handicap_text}球后赢盘概率仅{h['win_prob']:.0%}，弱队赢盘概率高达{h['lose_prob']:.0%}，让球价值低"
-        else:
-            steady_text = f"⚠️ 赢盘概率{h['win_prob']:.0%}未达稳胆线，不建议单独做稳胆"
-        report += f"**稳胆判定**：{steady_text}\n\n"
+            handicap_text = f"{h['handicap_goals']:g}"
+            report += f"##### 二、让球盘（串关稳胆参考 · {h['favorite_name']}让{handicap_text}球）\n\n"
+            report += "> 📌 模型自动匹配盘口（强队赢盘概率最接近50%的档位），已按融合概率校准，真实盘口以官方为准。\n\n"
+            report += "| 强队赢盘 | 走盘 | 弱队赢盘 |\n|---|---:|---:|\n"
+            if h["draw_prob"] > 0.001:
+                report += f"| {h['win_prob']:.1%} | {h['draw_prob']:.1%} | {h['lose_prob']:.1%} |\n\n"
+            else:
+                report += f"| {h['win_prob']:.1%} | - | {h['lose_prob']:.1%} |\n\n"
+            if h["is_strong_steady"]:
+                steady_text = f"✅✅ 强稳胆，{h['favorite_name']}让{handicap_text}球后赢盘概率超50%，可重仓做串关打底"
+            elif h["is_steady"]:
+                steady_text = f"✅ 稳胆，{h['favorite_name']}让{handicap_text}球后赢盘概率超45%，可作串关打底"
+            elif h["win_prob"] >= 0.40:
+                steady_text = f"⚠️ 准稳胆，赢盘概率{h['win_prob']:.0%}（40%~45%），轻仓参考，注意走盘风险"
+            elif h["lose_prob"] >= 0.45:
+                steady_text = f"❌ 不推荐，{h['favorite_name']}让{handicap_text}球后赢盘概率仅{h['win_prob']:.0%}，弱队赢盘概率高达{h['lose_prob']:.0%}，让球价值低"
+            else:
+                steady_text = f"⚠️ 赢盘概率{h['win_prob']:.0%}未达稳胆线，不建议单独做稳胆"
+            report += f"**稳胆判定**：{steady_text}\n\n"
         
         # 三、半全场双选
-        report += "##### 三、半全场双选（平系策略）\n\n"
+        report += "##### 三、半全场双选\n\n"
         hf = r["hf_combos"]
-        if hf["符合平系标准"]:
-            report += f"✅ **本场符合平系择赛标准**\n"
-            report += f"> 📌 判定依据：半场平局概率 {hf['半场平概率']:.1%}，≥ {hf['阈值']*100:.0f}% 的合格阈值，上半场平局概率高，双选容错率强。\n\n"
+        ping_type = hf.get("ping_type", "非平系")
+        
+        if ping_type == "严格平系":
+            report += f"✅ **本场符合严格平系标准**\n"
+            report += f"> 📌 判定依据：半场平局概率 {hf['半场平概率']:.1%}，≥ {PING_STRICT_THRESHOLD*100:.0f}%，高置信平系场，双选容错率强。\n\n"
+        elif ping_type == "均衡平系":
+            report += f"✅ **本场符合均衡平系标准**\n"
+            report += f"> 📌 判定依据：半场平局概率 {hf['半场平概率']:.1%}，≥ {PING_BALANCED_THRESHOLD*100:.0f}%，中等置信平系场，双选容错率较好。\n\n"
         else:
-            report += f"⚠️ **本场不符合平系择赛标准**\n"
-            report += f"> 📌 判定依据：半场平局概率 {hf['半场平概率']:.1%}，低于 {hf['阈值']*100:.0f}% 的合格阈值，上半场分胜负概率更高，双选容错率不足。以下仅作参考。\n\n"
+            report += f"⚠️ **本场非平系场**\n"
+            report += f"> 📌 判定依据：半场平局概率 {hf['半场平概率']:.1%}，低于 {PING_BALANCED_THRESHOLD*100:.0f}%，上半场分胜负概率更高。以下按全场方向推荐，仅作参考，不宜重仓。\n\n"
+        
         if hf["首选"]:
             c = hf["首选"]
-            report += "###### ✅ 首选组合（稳健主力 · 建议占半全场仓位60%-70%）\n"
+            report += "###### ✅ 首选组合\n"
             report += f"- **组合选项**：{c['combo']}\n"
             report += f"- **综合中奖概率**：{c['total_prob']:.1%}（约每{1/c['total_prob']:.1f}单中1单）\n"
             report += f"- **对应SP赔率**：{c['sp']}\n"
@@ -910,19 +1130,19 @@ def generate_report():
             report += "\n"
         if hf["次选"]:
             c = hf["次选"]
-            report += "###### ⚠️ 次选组合（收益增强 · 建议占半全场仓位20%-30%）\n"
+            report += "###### ⚠️ 次选组合（收益增强）\n"
             report += f"- **组合选项**：{c['combo']}\n"
             report += f"- **综合中奖概率**：{c['total_prob']:.1%}\n"
             report += f"- **对应SP赔率**：{c['sp']}\n"
             if c["ev_pct"] is not None:
                 report += f"- **综合期望收益**：{c['ev_pct']:+.1f}%\n"
             report += "\n"
-        if hf["博弈备选"]:
+        if hf.get("博弈备选"):
             c = hf["博弈备选"]
-            report += "###### 🎲 博弈备选（娱乐小注 · 建议≤半全场仓位10%）\n"
+            report += "###### 🎲 博弈备选（娱乐小注）\n"
             report += f"- **组合选项**：{c['combo']}\n"
             report += f"- **对应SP赔率**：{c['sp']}\n"
-            report += f"- **综合期望收益**：{c['ev_pct']:+.1f}%，长期微亏，仅适合临场小仓位博弈\n"
+            report += f"- **综合期望收益**：{c['ev_pct']:+.1f}%\n"
             report += "\n"
         
         # 四、总进球&比分
@@ -944,6 +1164,55 @@ def generate_report():
             else:
                 report += f"✅ 分歧较小：分歧值 {div['value']:.1%}，模型与市场预期基本一致。\n"
             report += "\n"
+        
+        # 六、综合决策建议
+        report += "##### 六、综合决策建议（大白话）\n\n"
+        if g["is_low_odds"]:
+            main_advice = f"主力方向：{g['direction']}，概率{g['max_prob']:.0%}，但赔率{g['rec_odds']:.2f}过低，仅作串关稳胆，不建议单场投注"
+        elif g["grade"] == "A档":
+            main_advice = f"主力方向：{g['direction']}，概率{g['max_prob']:.0%}，可单场主力或做串关稳胆"
+        elif g["grade"] == "B档":
+            main_advice = f"主力方向：{g['direction']}，概率{g['max_prob']:.0%}，轻仓投注或串关搭配"
+        elif g["grade"] == "C档":
+            main_advice = f"方向：{g['direction']}，概率偏低，娱乐小注即可，不建议重仓"
+        else:
+            main_advice = "本场不建议介入，跳过"
+        
+        if h.get("is_draw_handicap"):
+            handicap_advice = "让球：双方实力接近，平手盘，无让球参考，直接看胜平负"
+        elif h["is_strong_steady"]:
+            handicap_advice = f"让球：{h['favorite_name']}让{h['handicap_goals']:g}球强稳胆，赢盘概率{h['win_prob']:.0%}，可做串关打底"
+        elif h["is_steady"]:
+            handicap_advice = f"让球：{h['favorite_name']}让{h['handicap_goals']:g}球稳胆，赢盘概率{h['win_prob']:.0%}，可做串关打底"
+        elif h["win_prob"] >= 0.40:
+            handicap_advice = f"让球：{h['favorite_name']}让{h['handicap_goals']:g}球赢盘概率{h['win_prob']:.0%}，准稳胆，轻仓参考"
+        else:
+            handicap_advice = f"让球：{h['favorite_name']}让{h['handicap_goals']:g}球价值低，不建议碰让球盘"
+        
+        if ping_type in ["严格平系", "均衡平系"] and hf["首选"]:
+            combo = hf["首选"]["combo"]
+            prob = hf["首选"]["total_prob"]
+            hf_advice = f"半全场：{ping_type}，双选{combo}，综合概率{prob:.0%}，{'主力推荐' if ping_type == '严格平系' else '次选推荐'}"
+        else:
+            hf_advice = "半全场：非平系场，按全场方向推荐，仅作参考，不宜重仓"
+        
+        ttg_top = r["top_ttg"][0][0] if r["top_ttg"] else 2
+        ttg_second = r["top_ttg"][1][0] if len(r["top_ttg"]) > 1 else ttg_top + 1
+        ttg_advice = f"总进球：首选{ttg_top}球，次选{ttg_second}球"
+        
+        if g["grade"] in ["A档", "B档"] and not g["is_low_odds"]:
+            summary = "💡 一句话：本场可买，按上述仓位配置即可"
+        elif g["is_low_odds"]:
+            summary = "💡 一句话：概率高但赔率低，只适合做串关稳胆，不建议单场买"
+        else:
+            summary = "💡 一句话：本场风险较高，建议跳过或纯娱乐小注"
+        
+        report += f"- {main_advice}\n"
+        report += f"- {handicap_advice}\n"
+        report += f"- {hf_advice}\n"
+        report += f"- {ttg_advice}\n"
+        report += f"\n{summary}\n\n"
+        
         report += "---\n\n"
     
     # 专题汇总
@@ -989,46 +1258,48 @@ def generate_report():
     # 分档位串关方案
     report += "## 🔗 分档位串关方案\n\n"
     ab_grade = [r for r in match_results if r["grade_info"]["grade"] in ["A档", "B档"] and r["odds_data"]]
-    steady_handicap = [r for r in match_results if r["handicap"]["is_steady"]]
-    ping_qualified = [r for r in match_results if r["hf_combos"]["符合平系标准"] and r["hf_combos"]["首选"]]
+    steady_handicap = [r for r in match_results if r["handicap"]["is_steady"] and not r["handicap"].get("is_draw_handicap")]
+    ping_qualified = [r for r in match_results if r["hf_combos"].get("ping_type") in ["严格平系", "均衡平系"] and r["hf_combos"]["首选"]]
     
     report += "### （1）稳健串（低风险 · 推荐主力）\n\n"
-    report += "> 选场规则：单场A/B档比赛，优先跨联赛搭配；总赔率区间：2.4~3.2\n\n"
-    if len(ab_grade) >= 2:
-        ab_sorted = sorted(ab_grade, key=lambda x: x["grade_info"]["rec_odds"])
-        c1 = ab_sorted[0]
-        c2 = ab_sorted[1]
-        total_odds = c1["grade_info"]["rec_odds"] * c2["grade_info"]["rec_odds"]
-        total_prob = c1["grade_info"]["max_prob"] * c2["grade_info"]["max_prob"]
-        report += "#### 组合一（首选）\n"
-        report += f"- **对阵1**：[{c1['league_name']}] {c1['home_zh']} vs {c1['away_zh']}（{c1['grade_info']['direction']}，{c1['grade_info']['grade']}）\n"
-        report += f"- **对阵2**：[{c2['league_name']}] {c2['home_zh']} vs {c2['away_zh']}（{c2['grade_info']['direction']}，{c2['grade_info']['grade']}）\n"
-        report += f"- **总赔率**：{total_odds:.2f}\n"
-        report += f"- **综合命中概率**：约{total_prob:.0%}\n"
-        report += "- **组合逻辑**：双稳健档位搭配，跨联赛降低同时爆冷风险，赔率处于黄金区间。\n"
-        report += "- **建议仓位**：占串关总资金的60%-70%\n\n"
+    report += "> 选场规则：单场A/B档比赛，排除赔率<1.40的低赔率场，优先跨联赛搭配；总赔率区间：2.4~3.2\n\n"
+    if top_parlays:
+        for idx, pc in enumerate(top_parlays[:2], 1):
+            r1 = pc["r1"]
+            r2 = pc["r2"]
+            report += f"#### 组合{idx}（{'首选' if idx == 1 else '备选'}）\n"
+            report += f"- **对阵1**：[{r1['league_name']}] {r1['home_zh']} vs {r1['away_zh']}（{r1['grade_info']['direction']}，{r1['grade_info']['grade']}，赔率{r1['grade_info']['rec_odds']:.2f}）\n"
+            report += f"- **对阵2**：[{r2['league_name']}] {r2['home_zh']} vs {r2['away_zh']}（{r2['grade_info']['direction']}，{r2['grade_info']['grade']}，赔率{r2['grade_info']['rec_odds']:.2f}）\n"
+            report += f"- **总赔率**：{pc['total_odds']:.2f}\n"
+            report += f"- **综合命中概率**：约{pc['total_prob']:.0%}\n"
+            report += "- **组合逻辑**：双稳健档位搭配，跨联赛降低同时爆冷风险，赔率处于合理区间。\n"
+            report += "- **建议仓位**：占串关总资金的60%-70%\n\n"
     else:
-        report += f"> 📌 说明：本期B档以上可串比赛仅 {len(ab_grade)} 场，满足不了二串一最低2场要求。\n"
+        report += "> 📌 说明：今日无符合赔率要求（单场≥1.40）的稳健串关组合。\n"
         report += "> 💡 替代方案：优先单场A档重仓，或等待次日更多赛事。\n\n"
     
     report += "### （2）让球价值串（中风险 · 轻仓搭配）\n\n"
     report += "> 选场规则：让球稳胆打底 + 高赔选项搭配；总赔率区间：3.2~4.5\n\n"
     if len(steady_handicap) >= 1 and len(ab_grade) >= 2:
         c1 = steady_handicap[0]
-        c3 = ab_sorted[-1]
-        total_odds = 1.85 * c3["grade_info"]["rec_odds"]
-        report += "#### 组合一\n"
-        report += f"- **对阵1**：[{c1['league_name']}] {c1['home_zh']} vs {c1['away_zh']}（{c1['handicap']['favorite_name']}让{c1['handicap']['handicap_goals']:g}球稳胆）\n"
-        report += f"- **对阵2**：[{c3['league_name']}] {c3['home_zh']} vs {c3['away_zh']}（收益增强）\n"
-        report += f"- **总赔率**：约{total_odds:.2f}\n"
-        report += "- **组合逻辑**：让球稳胆打底+高收益选项搭配，平衡风险与收益。\n"
-        report += "- **建议仓位**：占串关总资金的20%-30%\n\n"
+        ab_sorted_by_odds = sorted([r for r in ab_grade if r["grade_info"]["rec_odds"] >= 1.5], key=lambda x: x["grade_info"]["rec_odds"], reverse=True)
+        if ab_sorted_by_odds:
+            c3 = ab_sorted_by_odds[0]
+            total_odds = 1.85 * c3["grade_info"]["rec_odds"]
+            report += "#### 组合一\n"
+            report += f"- **对阵1**：[{c1['league_name']}] {c1['home_zh']} vs {c1['away_zh']}（{c1['handicap']['favorite_name']}让{c1['handicap']['handicap_goals']:g}球稳胆）\n"
+            report += f"- **对阵2**：[{c3['league_name']}] {c3['home_zh']} vs {c3['away_zh']}（收益增强，赔率{c3['grade_info']['rec_odds']:.2f}）\n"
+            report += f"- **总赔率**：约{total_odds:.2f}\n"
+            report += "- **组合逻辑**：让球稳胆打底+高收益选项搭配，平衡风险与收益。\n"
+            report += "- **建议仓位**：占串关总资金的20%-30%\n\n"
+        else:
+            report += "> 📌 说明：无合适高赔搭配场次。\n\n"
     else:
         report += f"> 📌 说明：本期让球稳胆仅 {len(steady_handicap)} 场，搭配场次不足。\n"
         report += "> 💡 替代方案：单场让球稳胆可单独小注，或搭配高赔率娱乐选项。\n\n"
     
     report += "### （3）半全场串关（中高风险 · 平系专属）\n\n"
-    report += "> 选场规则：符合平系标准的比赛，优先跨联赛搭配；总SP区间：8~15倍\n\n"
+    report += "> 选场规则：符合平系标准的比赛（严格+均衡），优先跨联赛搭配；总SP区间：8~15倍\n\n"
     if len(ping_qualified) >= 2:
         best_parlay = build_hf_parlay(ping_qualified, "首选")
         if best_parlay:
@@ -1102,19 +1373,20 @@ def generate_report():
         report += f"- **{ln}**：平均平局概率 {avg_draw:.1%}，平均总进球 {avg_ttg:.2f}\n"
     report += "\n"
     report += "### 4. 串关资源\n"
-    report += f"- B档以上可串比赛：{len(ab_grade)} 场\n"
+    report += f"- B档以上可串比赛：{len(ab_grade)} 场（排除低赔率后{len(ab_grade_for_parlay)}场）\n"
     report += f"- 让球稳胆场次：{len(steady_handicap)} 场（强稳胆{strong_steady_count}场）\n"
-    report += f"- 符合平系策略场次：{ping_count} 场\n"
-    report += f"- 战意修正场次：{motivation_adjusted} 场\n\n"
+    report += f"- 平系策略场次：严格{ping_strict_count}场 + 均衡{ping_balanced_count}场 = {ping_strict_count+ping_balanced_count}场\n"
+    report += f"- 战意修正场次：{motivation_adjusted} 场（赛季过滤后）\n\n"
     report += "---\n\n"
     
     # 术语对照表
     report += "## 📚 附录：术语大白话对照表\n\n"
     report += "| 术语 | 大白话解释 |\n|------|------------|\n"
     report += "| 融合概率 | 多个模型综合算出的结果发生概率，数值越高越容易中 |\n"
-    report += "| 战意系数 | 根据球队排名/分差判断拼命程度，保级/争冠队概率小幅上调，无欲无求队小幅下调 |\n"
-    report += "| 多档让球 | 自动计算让0/0.5/1/1.5/2球五档，选赢盘概率最接近50%的档位，更贴近真实盘口 |\n"
-    report += "| EV（期望收益） | 长期反复买这个选项，平均每100块能赚多少钱；正数=长期赚，负数=长期亏 |\n"
+    report += "| 战意系数 | 根据球队当前赛季排名/分差判断拼命程度，保级/争冠队概率小幅上调，无欲无求队小幅下调 |\n"
+    report += "| 多档让球 | 自动计算让0.5/1/1.5/2球四档，选赢盘概率最接近50%的档位，平手盘场次明确说明 |\n"
+    report += "| 分级平系 | 半场平局概率≥48%为严格平系（高置信），44%~48%为均衡平系（中等置信），<44%非平系按全场方向推荐 |\n"
+    report += "| EV（期望收益） | 长期反复买这个选项，平均每100块能赚多少钱；正数=长期赚，负数=长期亏。多数为负属正常 |\n"
     report += "| SP赔率 | 中了之后的赔付倍数，比如SP=4.0就是投100中了拿400 |\n"
     report += "| 让球盘 | 强队让弱队若干球之后再算胜平负，用来平衡强弱差距 |\n"
     report += "| 平系策略 | 专门挑上半场容易打平的比赛，双选「平平+平X」，胜率更稳 |\n"
@@ -1132,8 +1404,9 @@ def generate_report():
                 "fused_home": r["fused_probs"][0], "fused_draw": r["fused_probs"][1], "fused_away": r["fused_probs"][2],
                 "pred_direction": r["grade_info"]["direction"], "grade": r["grade_info"]["grade"],
                 "ev": r["grade_info"]["ev"], "ht_draw_prob": r["hf_combos"]["半场平概率"],
-                "ping_standard": r["hf_combos"]["符合平系标准"],
-                "handicap_goals": r["handicap"]["handicap_goals"],
+                "ping_type": r["hf_combos"].get("ping_type", ""),
+                "handicap_goals": r["handicap"].get("handicap_goals"),
+                "is_draw_handicap": r["handicap"].get("is_draw_handicap", False),
                 "handicap_win_prob": r["handicap"]["win_prob"],
                 "is_steady": r["handicap"]["is_steady"],
                 "home_motivation": r["home_motivation"], "away_motivation": r["away_motivation"],
@@ -1154,7 +1427,7 @@ def generate_report():
     os.makedirs("docs", exist_ok=True)
     with open("docs/index.md", "w", encoding="utf-8") as f:
         f.write(report)
-    print(f"📄 多档让球+战意系数版报告已生成")
+    print(f"📄 全面修复版报告已生成")
 
 if __name__ == "__main__":
     generate_report()
