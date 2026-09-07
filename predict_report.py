@@ -1,3 +1,979 @@
+<<<<<<< HEAD
+# -*- coding: utf-8 -*-
+import os
+import math
+import argparse
+from datetime import datetime
+from collections import defaultdict, OrderedDict
+
+# ===================== 基础工具函数 =====================
+def poisson_prob(lam, k):
+    """泊松分布概率"""
+    return (lam ** k) * math.exp(-lam) / math.factorial(k)
+
+def odds_to_prob(odds):
+    """赔率转概率（不含抽水）"""
+    if odds <= 1:
+        return 0.01
+    return 1.0 / odds
+
+def prob_to_odds(prob, rake=0.85):
+    """概率转估算赔率（默认抽水15%）"""
+    if prob <= 0.001:
+        return 100.0
+    return 1.0 / (prob * rake)
+
+def calc_ev(prob, odds):
+    """计算期望收益EV"""
+    return prob * odds - 1
+
+# ===================== 预测核心计算 =====================
+class MatchPrediction:
+    def __init__(self, match_id, league, home_team, away_team, kickoff_time,
+                 home_attack, away_attack, home_defense, away_defense,
+                 market_odds=None, elo_diff=0):
+        self.match_id = match_id
+        self.league = league
+        self.home_team = home_team
+        self.away_team = away_team
+        self.kickoff_time = kickoff_time
+        
+        # 期望进球
+        self.home_xg = home_attack * away_defense
+        self.away_xg = away_attack * home_defense
+        
+        # 市场赔率
+        self.market_odds = market_odds or {}
+        self.elo_diff = elo_diff
+        
+        # 计算全场胜平负
+        self._calc_fulltime_result()
+        # 计算半场胜平负
+        self._calc_halftime_result()
+        # 计算半全场9种结果
+        self._calc_half_full_result()
+        # 计算总进球和比分
+        self._calc_goals_and_score()
+        # 计算让球盘
+        self._calc_handicap()
+        # 平系判定与校准
+        self._calc_pingxi_level()
+
+    def _calc_fulltime_result(self):
+        """全场胜平负概率（泊松基础）"""
+        home_win = 0.0
+        draw = 0.0
+        away_win = 0.0
+        
+        for h in range(0, 8):
+            for a in range(0, 8):
+                p = poisson_prob(self.home_xg, h) * poisson_prob(self.away_xg, a)
+                if h > a:
+                    home_win += p
+                elif h == a:
+                    draw += p
+                else:
+                    away_win += p
+        
+        # ELO修正
+        elo_adj = self.elo_diff * 0.005
+        home_win += elo_adj
+        away_win -= elo_adj
+        home_win = max(0.05, min(0.9, home_win))
+        away_win = max(0.05, min(0.9, away_win))
+        draw = 1 - home_win - away_win
+        
+        self.full_home_prob = home_win
+        self.full_draw_prob = draw
+        self.full_away_prob = away_win
+        
+        # 融合市场赔率
+        if self.market_odds and 'home' in self.market_odds:
+            m_home = odds_to_prob(self.market_odds['home'])
+            m_draw = odds_to_prob(self.market_odds['draw'])
+            m_away = odds_to_prob(self.market_odds['away'])
+            total = m_home + m_draw + m_away
+            m_home /= total
+            m_draw /= total
+            m_away /= total
+            
+            self.final_home = 0.6 * home_win + 0.4 * m_home
+            self.final_draw = 0.6 * draw + 0.4 * m_draw
+            self.final_away = 0.6 * away_win + 0.4 * m_away
+            self.has_market = True
+        else:
+            self.final_home = home_win
+            self.final_draw = draw
+            self.final_away = away_win
+            self.has_market = False
+        
+        # 首选方向
+        self.best_result = max(
+            ('主胜', self.final_home),
+            ('平局', self.final_draw),
+            ('客胜', self.final_away),
+            key=lambda x: x[1]
+        )
+
+    def _calc_halftime_result(self):
+        """半场胜平负概率"""
+        half_home_xg = self.home_xg * 0.45
+        half_away_xg = self.away_xg * 0.45
+        
+        ht_home = 0.0
+        ht_draw = 0.0
+        ht_away = 0.0
+        
+        for h in range(0, 5):
+            for a in range(0, 5):
+                p = poisson_prob(half_home_xg, h) * poisson_prob(half_away_xg, a)
+                if h > a:
+                    ht_home += p
+                elif h == a:
+                    ht_draw += p
+                else:
+                    ht_away += p
+        
+        self.ht_home_prob = ht_home
+        self.ht_draw_prob = ht_draw
+        self.ht_away_prob = ht_away
+        
+        self.best_ht_result = max(
+            ('半场主胜', ht_home),
+            ('半场平', ht_draw),
+            ('半场客胜', ht_away),
+            key=lambda x: x[1]
+        )
+
+    def _calc_half_full_result(self):
+        """半全场9种结果概率"""
+        self.hf_results = OrderedDict()
+        labels = ['胜胜', '胜平', '胜负', '平胜', '平平', '平负', '负胜', '负平', '负负']
+        
+        half_home_xg = self.home_xg * 0.45
+        half_away_xg = self.away_xg * 0.45
+        full_home_xg = self.home_xg * 0.55
+        full_away_xg = self.away_xg * 0.55
+        
+        # 半场结果
+        ht_probs = {
+            '胜': self.ht_home_prob,
+            '平': self.ht_draw_prob,
+            '负': self.ht_away_prob
+        }
+        
+        # 简化计算：基于条件概率
+        for hf_label in labels:
+            ht = hf_label[0]
+            ft = hf_label[1]
+            
+            if ht == '胜' and ft == '胜':
+                p = self.final_home * 0.72
+            elif ht == '胜' and ft == '平':
+                p = self.final_draw * 0.35
+            elif ht == '胜' and ft == '负':
+                p = self.final_away * 0.15
+            elif ht == '平' and ft == '胜':
+                p = self.final_home * 0.45
+            elif ht == '平' and ft == '平':
+                p = self.final_draw * 0.55
+            elif ht == '平' and ft == '负':
+                p = self.final_away * 0.45
+            elif ht == '负' and ft == '胜':
+                p = self.final_home * 0.15
+            elif ht == '负' and ft == '平':
+                p = self.final_draw * 0.35
+            elif ht == '负' and ft == '负':
+                p = self.final_away * 0.72
+            else:
+                p = 0.01
+            
+            self.hf_results[hf_label] = max(0.01, p)
+        
+        # 归一化
+        total = sum(self.hf_results.values())
+        for k in self.hf_results:
+            self.hf_results[k] /= total
+        
+        # 按概率排序取前3
+        self.hf_top3 = sorted(self.hf_results.items(), key=lambda x: x[1], reverse=True)[:3]
+
+    def _calc_goals_and_score(self):
+        """总进球概率和比分TOP3"""
+        goal_probs = defaultdict(float)
+        score_probs = {}
+        
+        for h in range(0, 7):
+            for a in range(0, 7):
+                p = poisson_prob(self.home_xg, h) * poisson_prob(self.away_xg, a)
+                total_goals = h + a
+                goal_probs[total_goals] += p
+                score_probs[f"{h}-{a}"] = p
+        
+        self.goal_probs = dict(sorted(goal_probs.items(), key=lambda x: x[1], reverse=True))
+        self.score_top3 = sorted(score_probs.items(), key=lambda x: x[1], reverse=True)[:3]
+        self.most_goals = list(self.goal_probs.keys())[0]
+        
+        # 总进球区间
+        goals_list = sorted(goal_probs.keys())
+        cum_prob = 0.0
+        self.core_goals = []
+        for g in goals_list:
+            if cum_prob < 0.6:
+                self.core_goals.append(g)
+                cum_prob += goal_probs[g]
+            else:
+                break
+        self.extend_goals = goals_list[:len(self.core_goals)+2]
+        
+        # 大小球（2.5球为界）
+        over_25 = sum(v for k, v in goal_probs.items() if k > 2)
+        self.over_25 = over_25
+        self.under_25 = 1 - over_25
+
+    def _calc_handicap(self):
+        """让球盘计算"""
+        self.handicaps = {}
+        for hc in [0.5, 1.0, 1.5, 2.0]:
+            home_win_hc = 0.0
+            for h in range(0, 8):
+                for a in range(0, 8):
+                    if h - a > hc:
+                        home_win_hc += poisson_prob(self.home_xg, h) * poisson_prob(self.away_xg, a)
+            self.handicaps[hc] = home_win_hc
+        
+        # 选最接近50%的盘口
+        best_hc = min(self.handicaps.items(), key=lambda x: abs(x[1] - 0.5))
+        self.best_handicap = best_hc[0]
+        self.best_hc_prob = best_hc[1]
+        
+        if self.best_hc_prob >= 0.55:
+            self.hc_level = "强稳胆"
+        elif self.best_hc_prob >= 0.45:
+            self.hc_level = "稳胆"
+        elif self.best_hc_prob >= 0.40:
+            self.hc_level = "准稳胆"
+        else:
+            self.hc_level = "不推荐"
+
+    def _calc_pingxi_level(self):
+        """平系等级判定（带0.7校准系数）"""
+        self.raw_ht_draw = self.ht_draw_prob
+        self.calibrated_ht_draw = self.ht_draw_prob * 0.7  # 核心校准
+        
+        if self.calibrated_ht_draw >= 0.40:
+            self.pingxi_level = "严格平系"
+        elif self.calibrated_ht_draw >= 0.38:
+            self.pingxi_level = "均衡平系"
+        else:
+            self.pingxi_level = "非平系"
+        
+        # 平系双选推荐
+        if self.pingxi_level != "非平系":
+            if self.final_home > self.final_away:
+                self.pingxi_pair = ("平平", "平胜")
+                pair_prob = self.hf_results['平平'] + self.hf_results['平胜']
+            else:
+                self.pingxi_pair = ("平平", "平负")
+                pair_prob = self.hf_results['平平'] + self.hf_results['平负']
+            self.pingxi_pair_prob = pair_prob
+        else:
+            if self.final_home > self.final_away:
+                self.pingxi_pair = ("胜胜", "平胜")
+            else:
+                self.pingxi_pair = ("负负", "平负")
+            self.pingxi_pair_prob = sum(v for k, v in self.hf_top3[:2])
+
+    def get_grade(self):
+        """档位判定"""
+        best_p = self.best_result[1]
+        if best_p >= 0.50:
+            return "A档"
+        elif best_p >= 0.40:
+            return "B档"
+        else:
+            return "C档"
+
+    def get_best_odds(self):
+        """获取首选方向赔率"""
+        direction = self.best_result[0]
+        if self.has_market:
+            if direction == '主胜':
+                return self.market_odds.get('home', prob_to_odds(self.final_home))
+            elif direction == '客胜':
+                return self.market_odds.get('away', prob_to_odds(self.final_away))
+            else:
+                return self.market_odds.get('draw', prob_to_odds(self.final_draw))
+        else:
+            return prob_to_odds(self.best_result[1])
+
+    def get_ev(self):
+        """EV计算"""
+        return calc_ev(self.best_result[1], self.get_best_odds())
+
+    def get_divergence(self):
+        """模型与市场分歧"""
+        if not self.has_market:
+            return 0.0, "无市场数据"
+        m_home = odds_to_prob(self.market_odds['home'])
+        total = m_home + odds_to_prob(self.market_odds['draw']) + odds_to_prob(self.market_odds['away'])
+        m_home /= total
+        diff = abs(self.final_home - m_home)
+        if diff >= 0.10:
+            return diff, "分歧较大"
+        else:
+            return diff, "分歧较小"
+
+
+# ===================== 报告生成器 =====================
+class HTMLReportGenerator:
+    def __init__(self, target_date, matches):
+        self.target_date = target_date
+        self.matches = matches
+        self.date_str = target_date.strftime("%Y-%m-%d")
+        
+        # 配色定义
+        self.colors = {
+            'bg': '#FFFFFF',
+            'text': '#333333',
+            'yellow': '#FFB800',      # 暖黄色高亮
+            'blue_light': '#E8F4FD',  # 浅蓝表头
+            'pink_light': '#FDF2F5',  # 浅粉风险
+            'border': '#E5E7EB',
+            'grade_a': '#10B981',
+            'grade_b': '#FFB800',
+            'grade_c': '#9CA3AF'
+        }
+
+    def generate(self):
+        html = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>足球预测报告 {self.date_str}</title>
+<style>
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{ 
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: {self.colors['bg']};
+    color: {self.colors['text']};
+    line-height: 1.6;
+    padding: 20px;
+    max-width: 1200px;
+    margin: 0 auto;
+}}
+h1 {{ font-size: 22px; margin-bottom: 10px; border-left: 4px solid {self.colors['yellow']}; padding-left: 12px; }}
+h2 {{ 
+    font-size: 18px; 
+    margin: 25px 0 12px; 
+    padding-bottom: 6px;
+    border-bottom: 2px solid {self.colors['yellow']};
+}}
+h3 {{ font-size: 16px; margin: 15px 0 8px; }}
+.info-bar {{ 
+    background: {self.colors['blue_light']};
+    padding: 12px 16px;
+    border-radius: 8px;
+    margin-bottom: 15px;
+    font-size: 14px;
+}}
+.warning-box {{
+    background: {self.colors['pink_light']};
+    padding: 10px 14px;
+    border-radius: 6px;
+    margin: 10px 0;
+    font-size: 13px;
+}}
+table {{
+    width: 100%;
+    border-collapse: collapse;
+    margin: 10px 0;
+    font-size: 14px;
+}}
+th {{
+    background: {self.colors['blue_light']};
+    padding: 8px 10px;
+    text-align: left;
+    font-weight: 600;
+    border: 1px solid {self.colors['border']};
+}}
+td {{
+    padding: 8px 10px;
+    border: 1px solid {self.colors['border']};
+}}
+.grade-a {{ color: {self.colors['grade_a']}; font-weight: 600; }}
+.grade-b {{ color: {self.colors['grade_b']}; font-weight: 600; }}
+.grade-c {{ color: {self.colors['grade_c']}; font-weight: 600; }}
+.highlight {{ background: #FFF9E6; }}
+.card {{
+    background: #FFFFFF;
+    border: 1px solid {self.colors['border']};
+    border-radius: 8px;
+    padding: 15px;
+    margin-bottom: 15px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+}}
+.match-card {{ margin-bottom: 20px; }}
+.match-header {{
+    background: {self.colors['blue_light']};
+    padding: 10px 15px;
+    border-radius: 6px 6px 0 0;
+    font-weight: 600;
+}}
+.match-body {{ padding: 15px; border: 1px solid {self.colors['border']}; border-top: none; border-radius: 0 0 6px 6px; }}
+.section-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }}
+@media (max-width: 768px) {{
+    .section-grid {{ grid-template-columns: 1fr; }}
+    body {{ padding: 10px; }}
+    table {{ font-size: 12px; }}
+}}
+.prog-bar {{
+    height: 8px;
+    background: #F3F4F6;
+    border-radius: 4px;
+    overflow: hidden;
+    margin: 4px 0;
+}}
+.prog-fill {{ height: 100%; background: {self.colors['yellow']}; }}
+.footer {{
+    margin-top: 30px;
+    padding-top: 15px;
+    border-top: 1px solid {self.colors['border']};
+    font-size: 12px;
+    color: #6B7280;
+    text-align: center;
+}}
+</style>
+</head>
+<body>
+"""
+        html += self._gen_header()
+        html += self._gen_final_recommend()
+        html += self._gen_overview_table()
+        html += self._gen_summary_tables()
+        html += self._gen_match_detail()
+        html += self._gen_topic_summary()
+        html += self._gen_parlay_schemes()
+        html += self._gen_data_stats()
+        html += self._gen_appendix()
+        html += """
+<div class="footer">
+    ⚠️ 风险提示：所有预测仅供参考，不构成投注建议。足球比赛不确定性高，请理性购彩，量力而行。
+</div>
+</body>
+</html>
+"""
+        return html
+
+    def _gen_header(self):
+        a_count = sum(1 for m in self.matches if m.get_grade() == 'A档')
+        b_count = sum(1 for m in self.matches if m.get_grade() == 'B档')
+        pingxi_strict = sum(1 for m in self.matches if m.pingxi_level == '严格平系')
+        pingxi_balance = sum(1 for m in self.matches if m.pingxi_level == '均衡平系')
+        
+        return f"""
+<h1>足球预测报告（全面修复版）</h1>
+<div class="info-bar">
+    <p><strong>生成时间：</strong>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}（北京时间）</p>
+    <p><strong>预测时段：</strong>{self.date_str} 17:00 ~ 次日 12:00</p>
+    <p><strong>数据来源：</strong>Football-Data.org + The Odds API + ELO</p>
+    <p><strong>模型说明：</strong>泊松模型（DC修正+联赛校准） + 全庄家赔率中位数 + ELO + 战意系数 + 多档让球 + 分级平系策略</p>
+</div>
+<div class="warning-box">
+    <p>⚠️ <strong>风险提示：</strong>所有预测仅供参考，不构成投注建议。足球比赛不确定性高，请理性购彩，量力而行。</p>
+    <p>📊 <strong>EV参考说明：</strong>足球博彩中绝大多数选项EV为负（庄家抽水约10%-15%），属正常现象。EV≥0%价值高，-5%~0%价值正常，-15%~-5%价值偏低。</p>
+    <p>💰 <strong>SP赔率说明：</strong>有真实赔率的场次基于赔率推导，无真实赔率的场次用模型概率估算（×0.85抽水系数），均标注「估算」。</p>
+</div>
+<div class="card">
+    <h3>本期概览</h3>
+    <p>共 <strong>{len(self.matches)}</strong> 场比赛，覆盖 {len(set(m.league for m in self.matches))} 大联赛；</p>
+    <p>- A档强推：<strong>{a_count}</strong> 场 | B档可买：<strong>{b_count}</strong> 场</p>
+    <p>- 平系策略：严格场 <strong>{pingxi_strict}</strong> 场 | 均衡场 <strong>{pingxi_balance}</strong> 场</p>
+</div>
+"""
+
+    def _gen_final_recommend(self):
+        # 二串一组合（A档优先）
+        a_matches = [m for m in self.matches if m.get_grade() == 'A档']
+        b_matches = [m for m in self.matches if m.get_grade() == 'B档']
+        
+        parlay_rows = ""
+        if len(a_matches) >= 1 and len(b_matches) >= 1:
+            for i, bm in enumerate(b_matches[:3]):
+                am = a_matches[0]
+                total_odds = round(am.get_best_odds() * bm.get_best_odds(), 2)
+                total_prob = round(am.best_result[1] * bm.best_result[1] * 100)
+                parlay_rows += f"""
+<tr>
+    <td>组合{i+1}</td>
+    <td>{am.home_team}vs{am.away_team}</td>
+    <td>{am.best_result[0]}</td>
+    <td class="grade-a">A档</td>
+    <td>{am.get_best_odds():.2f}</td>
+    <td>{bm.home_team}vs{bm.away_team}</td>
+    <td>{bm.best_result[0]}</td>
+    <td class="grade-b">B档</td>
+    <td>{bm.get_best_odds():.2f}</td>
+    <td><strong>{total_odds}</strong></td>
+    <td>约{total_prob}%</td>
+</tr>
+"""
+        
+        # 平系推荐（动态阈值）
+        strict_pingxi = [m for m in self.matches if m.calibrated_ht_draw >= 0.40]
+        if len(strict_pingxi) < 2:
+            selected_pingxi = [m for m in self.matches if m.calibrated_ht_draw >= 0.38]
+        else:
+            selected_pingxi = strict_pingxi
+        selected_pingxi = sorted(selected_pingxi, key=lambda x: x.calibrated_ht_draw, reverse=True)[:3]
+        
+        pingxi_rows = ""
+        for idx, m in enumerate(selected_pingxi):
+            pair = f"{m.pingxi_pair[0]} + {m.pingxi_pair[1]}"
+            sp_odds = round(prob_to_odds(m.pingxi_pair_prob), 2)
+            ev = round(calc_ev(m.pingxi_pair_prob, sp_odds) * 100, 1)
+            pingxi_rows += f"""
+<tr>
+    <td>H{idx+1}</td>
+    <td>{m.home_team}vs{m.away_team}</td>
+    <td>{pair}</td>
+    <td>{m.calibrated_ht_draw*100:.1f}%</td>
+    <td>{m.pingxi_level}</td>
+    <td>{m.pingxi_pair_prob*100:.1f}%</td>
+    <td>{sp_odds}</td>
+    <td>{ev:+.1f}%</td>
+</tr>
+"""
+        
+        return f"""
+<h2>🎯 今日最终推荐（直接看这里）</h2>
+<h3>一、稳健二串一推荐</h3>
+<table>
+<tr>
+    <th>组合</th><th>对阵1</th><th>选项</th><th>档位</th><th>赔率</th>
+    <th>对阵2</th><th>选项</th><th>档位</th><th>赔率</th><th>总赔率</th><th>综合命中率</th>
+</tr>
+{parlay_rows}
+</table>
+
+<h3>二、平系半全场推荐（平平+平X双选）</h3>
+<table>
+<tr>
+    <th>编号</th><th>对阵</th><th>组合</th><th>半场平概率(校准后)</th>
+    <th>场类型</th><th>双选概率</th><th>估算SP</th><th>期望收益</th>
+</tr>
+{pingxi_rows}
+</table>
+<div class="info-bar" style="font-size:13px;">
+💡 平系双选说明：半场平局概率经×0.7校准，优先选≥40%严格场，场次不足自动兜底到≥38%均衡场。
+</div>
+"""
+
+    def _gen_overview_table(self):
+        rows = ""
+        for idx, m in enumerate(self.matches, 1):
+            grade = m.get_grade()
+            grade_class = f"grade-{grade[0].lower()}"
+            rows += f"""
+<tr>
+    <td>{idx:03d}</td>
+    <td>{m.home_team} vs {m.away_team}</td>
+    <td>{m.best_result[0]} {m.best_result[1]*100:.1f}%</td>
+    <td class="{grade_class}">{grade}</td>
+    <td>{m.best_handicap}球 {m.hc_level}</td>
+    <td>{m.pingxi_level}</td>
+    <td>{m.pingxi_pair[0]} + {m.pingxi_pair[1]}</td>
+    <td>{m.most_goals}球</td>
+</tr>
+"""
+        return f"""
+<h2>📋 总览汇总表</h2>
+<div class="info-bar" style="font-size:13px;">
+💡 快速用法：直接筛「A档」比赛做主投，「B档」做串关，C档直接跳过。
+</div>
+<table>
+<tr>
+    <th>编号</th><th>对阵</th><th>胜平负首选</th><th>档位</th>
+    <th>让球参考</th><th>平系类型</th><th>半全场首选</th><th>总进球首选</th>
+</tr>
+{rows}
+</table>
+"""
+
+    def _gen_summary_tables(self):
+        # 1. 比分TOP3汇总
+        score_rows = ""
+        sorted_matches = sorted(self.matches, key=lambda x: x.score_top3[0][1], reverse=True)
+        for idx, m in enumerate(sorted_matches, 1):
+            s1, p1 = m.score_top3[0]
+            s2, p2 = m.score_top3[1]
+            s3, p3 = m.score_top3[2]
+            score_rows += f"""
+<tr>
+    <td>{idx}</td><td>{m.league}</td><td>{m.home_team}vs{m.away_team}</td>
+    <td class="highlight">{s1} ({p1*100:.1f}%)</td>
+    <td>{s2} ({p2*100:.1f}%)</td>
+    <td>{s3} ({p3*100:.1f}%)</td>
+</tr>
+"""
+        
+        # 2. 半场胜平负汇总
+        ht_rows = ""
+        for idx, m in enumerate(self.matches, 1):
+            best_ht, best_p = m.best_ht_result
+            conf = "高" if best_p >= 0.5 else "中" if best_p >= 0.4 else "低"
+            conf_class = "grade-a" if conf == "高" else "grade-b" if conf == "中" else ""
+            ht_rows += f"""
+<tr>
+    <td>{idx}</td><td>{m.league}</td><td>{m.home_team}vs{m.away_team}</td>
+    <td>{best_ht}</td>
+    <td>{m.ht_home_prob*100:.1f}%</td>
+    <td class="highlight">{m.ht_draw_prob*100:.1f}%</td>
+    <td>{m.ht_away_prob*100:.1f}%</td>
+    <td class="{conf_class}">{conf}</td>
+</tr>
+"""
+        
+        # 3. 半全场9种结果汇总
+        hf_rows = ""
+        for idx, m in enumerate(self.matches, 1):
+            cells = ""
+            for label, prob in m.hf_results.items():
+                pct = prob * 100
+                if pct >= 15:
+                    cells += f'<td class="highlight">{pct:.1f}%</td>'
+                elif pct >= 10:
+                    cells += f'<td style="background:{self.colors["blue_light"]}">{pct:.1f}%</td>'
+                else:
+                    cells += f'<td style="color:#9CA3AF">{pct:.1f}%</td>'
+            hf_rows += f"""
+<tr>
+    <td>{idx}</td><td>{m.home_team}vs{m.away_team}</td>{cells}
+</tr>
+"""
+        
+        return f"""
+<h2>📊 独立汇总模块</h2>
+<h3>1. 比分TOP3推荐汇总</h3>
+<table>
+<tr>
+    <th>编号</th><th>联赛</th><th>对阵</th>
+    <th>比分TOP1</th><th>比分TOP2</th><th>比分TOP3</th>
+</tr>
+{score_rows}
+</table>
+
+<h3>2. 半场胜平负推荐汇总</h3>
+<table>
+<tr>
+    <th>编号</th><th>联赛</th><th>对阵</th>
+    <th>推荐方向</th><th>半场胜</th><th>半场平</th><th>半场负</th><th>置信度</th>
+</tr>
+{ht_rows}
+</table>
+
+<h3>3. 半全场完整概率参考（9种结果）</h3>
+<table>
+<tr>
+    <th>编号</th><th>对阵</th>
+    <th>胜胜</th><th>胜平</th><th>胜负</th>
+    <th>平胜</th><th>平平</th><th>平负</th>
+    <th>负胜</th><th>负平</th><th>负负</th>
+</tr>
+{hf_rows}
+</table>
+<div class="info-bar" style="font-size:12px;">
+颜色说明：黄色背景≥15%高概率 | 浅蓝背景10%-15%中概率 | 灰色文字<10%低概率
+</div>
+"""
+
+    def _gen_match_detail(self):
+        html = '<h2>⚽ 单场深度决策分析</h2>'
+        
+        # 按联赛分组
+        league_groups = defaultdict(list)
+        for m in self.matches:
+            league_groups[m.league].append(m)
+        
+        for league, matches in league_groups.items():
+            html += f"<h3>{league}</h3>"
+            for idx, m in enumerate(matches, 1):
+                html += self._gen_single_match(m, idx)
+        
+        return html
+
+    def _gen_single_match(self, m, idx):
+        grade = m.get_grade()
+        grade_class = f"grade-{grade[0].lower()}"
+        div_val, div_text = m.get_divergence()
+        ev = m.get_ev()
+        
+        # 半全场TOP3
+        hf_top3_html = ""
+        for label, prob in m.hf_top3:
+            sp = prob_to_odds(prob)
+            hf_top3_html += f"<li><strong>{label}</strong>：概率{prob*100:.1f}%，估算SP {sp:.2f}</li>"
+        
+        # 总进球区间
+        core_goals_str = "、".join(str(g)+"球" for g in sorted(m.core_goals))
+        extend_goals_str = "、".join(str(g)+"球" for g in sorted(m.extend_goals))
+        over_text = "大球" if m.over_25 > 0.5 else "小球"
+        
+        return f"""
+<div class="match-card">
+<div class="match-header">
+    {idx:02d} {m.home_team} vs {m.away_team} · {m.kickoff_time.strftime('%H:%M')}开赛
+</div>
+<div class="match-body">
+    <p><strong>期望进球：</strong>主 {m.home_xg:.2f}，客 {m.away_xg:.2f}</p>
+    
+    <h4>一、单场胜平负（主力投注）</h4>
+    <p><strong>融合最终概率：</strong></p>
+    <p>主胜 {m.final_home*100:.1f}% <div class="prog-bar"><div class="prog-fill" style="width:{m.final_home*100}%"></div></div></p>
+    <p>平局 {m.final_draw*100:.1f}% <div class="prog-bar"><div class="prog-fill" style="width:{m.final_draw*100}%"></div></div></p>
+    <p>客胜 {m.final_away*100:.1f}% <div class="prog-bar"><div class="prog-fill" style="width:{m.final_away*100}%"></div></div></p>
+    <p><strong>概率档位：</strong><span class="{grade_class}">{grade}（{m.best_result[0]} {m.best_result[1]*100:.1f}%）</span></p>
+    <p><strong>对应赔率：</strong>{m.get_best_odds():.2f}</p>
+    <p><strong>EV解读：</strong>{ev*100:+.1f}%</p>
+    
+    <h4>二、让球盘参考</h4>
+    <p>推荐盘口：{m.best_handicap}球，赢盘概率 {m.best_hc_prob*100:.1f}%</p>
+    <p><strong>稳胆判定：</strong>{m.hc_level}</p>
+    
+    <h4>三、半全场TOP3（按概率排序）</h4>
+    <ul>{hf_top3_html}</ul>
+    <p><strong>平系等级：</strong>{m.pingxi_level}（半场平校准后 {m.calibrated_ht_draw*100:.1f}%）</p>
+    <p><strong>推荐双选：</strong>{m.pingxi_pair[0]} + {m.pingxi_pair[1]}，综合概率 {m.pingxi_pair_prob*100:.1f}%</p>
+    
+    <h4>四、总进球 & 比分参考</h4>
+    <p><strong>核心主推区间：</strong>{core_goals_str}</p>
+    <p><strong>延伸参考区间：</strong>{extend_goals_str}</p>
+    <p><strong>大小球倾向：</strong>{over_text}（大球概率 {m.over_25*100:.1f}%）</p>
+    <p><strong>比分TOP3：</strong>{'，'.join([f"{s}({p*100:.1f}%)" for s,p in m.score_top3])}</p>
+    
+    <h4>五、模型 vs 市场分歧</h4>
+    <p>{div_text}：分歧值 {div_val*100:.1f}%</p>
+    
+    <div class="info-bar" style="margin-top:10px;">
+    <strong>💡 综合决策建议：</strong>
+    主力方向{m.best_result[0]}，概率{m.best_result[1]*100:.0f}%；
+    半全场{m.pingxi_level}，推荐{m.pingxi_pair[0]}+{m.pingxi_pair[1]}；
+    总进球首选{core_goals_str}。
+    </div>
+</div>
+</div>
+"""
+
+    def _gen_topic_summary(self):
+        # 搏冷备选
+        cold_rows = ""
+        cold_matches = [m for m in self.matches if m.get_divergence()[0] >= 0.10][:3]
+        for m in cold_matches:
+            diff, _ = m.get_divergence()
+            cold_rows += f"""
+<tr>
+    <td>{m.home_team} vs {m.away_team}</td>
+    <td>{m.best_result[0]}</td>
+    <td>{m.best_result[1]*100:.1f}%</td>
+    <td>{diff*100:.1f}%</td>
+    <td>价值追击</td>
+</tr>
+"""
+        
+        # 市场过热
+        hot_matches = [m for m in self.matches if m.best_result[1] >= 0.65]
+        hot_text = "、".join([f"{m.home_team}vs{m.away_team}（{m.best_result[0]} {m.best_result[1]*100:.1f}%）" for m in hot_matches])
+        if not hot_text:
+            hot_text = "本期无明显过热场次"
+        
+        return f"""
+<h2>🎯 专题汇总</h2>
+<h3>（1）搏冷备选汇总</h3>
+<table>
+<tr><th>对阵</th><th>方向</th><th>模型概率</th><th>分歧值</th><th>类型</th></tr>
+{cold_rows if cold_rows else '<tr><td colspan="5">本期无明显搏冷场次</td></tr>'}
+</table>
+
+<h3>（2）市场过热提示</h3>
+<div class="warning-box">
+以下场次热门方向概率≥65%，赔率价值被压缩，追热性价比低，注意防冷：<br>
+{hot_text}
+</div>
+"""
+
+    def _gen_parlay_schemes(self):
+        # 稳健串
+        a_matches = [m for m in self.matches if m.get_grade() == 'A档']
+        b_matches = [m for m in self.matches if m.get_grade() == 'B档']
+        
+        stable_text = ""
+        if len(a_matches) >= 1 and len(b_matches) >= 1:
+            am = a_matches[0]
+            bm = b_matches[0]
+            total_odds = round(am.get_best_odds() * bm.get_best_odds(), 2)
+            stable_text = f"""
+<p><strong>组合1（首选）：</strong></p>
+<p>对阵1：[{am.league}] {am.home_team} vs {am.away_team}（{am.best_result[0]}，{am.get_grade()}，赔率{am.get_best_odds():.2f}）</p>
+<p>对阵2：[{bm.league}] {bm.home_team} vs {bm.away_team}（{bm.best_result[0]}，{bm.get_grade()}，赔率{bm.get_best_odds():.2f}）</p>
+<p><strong>总赔率：</strong>{total_odds}</p>
+<p><strong>建议仓位：</strong>占串关总资金的60%-70%</p>
+"""
+        
+        return f"""
+<h2>🔗 分档位串关方案</h2>
+<h3>（1）稳健串（低风险 · 推荐主力）</h3>
+<div class="card">
+{stable_text if stable_text else '<p>本期稳健场次不足，建议降低串关仓位。</p>'}
+</div>
+
+<h3>（2）平系专属串关（中高风险）</h3>
+<div class="card">
+<p>选场规则：符合平系标准的比赛，优先跨联赛搭配。</p>
+<p>建议仓位：占串关总资金的10%-20%</p>
+</div>
+"""
+
+    def _gen_data_stats(self):
+        prob_60 = sum(1 for m in self.matches if m.best_result[1] >= 0.6)
+        prob_40_50 = sum(1 for m in self.matches if 0.4 <= m.best_result[1] < 0.5)
+        
+        a_count = sum(1 for m in self.matches if m.get_grade() == 'A档')
+        b_count = sum(1 for m in self.matches if m.get_grade() == 'B档')
+        
+        # 联赛特征
+        league_stats = defaultdict(lambda: {'draw_sum':0, 'xg_sum':0, 'count':0})
+        for m in self.matches:
+            league_stats[m.league]['draw_sum'] += m.final_draw
+            league_stats[m.league]['xg_sum'] += (m.home_xg + m.away_xg)
+            league_stats[m.league]['count'] += 1
+        
+        league_text = ""
+        for lg, stat in league_stats.items():
+            avg_draw = stat['draw_sum'] / stat['count'] * 100
+            avg_xg = stat['xg_sum'] / stat['count']
+            league_text += f"<p><strong>{lg}：</strong>平均平局概率 {avg_draw:.1f}%，平均总进球 {avg_xg:.2f}</p>"
+        
+        return f"""
+<h2>📊 本期数据规律（自动统计）</h2>
+<div class="section-grid">
+<div class="card">
+    <h4>1. 概率分布</h4>
+    <p>≥60%稳胆场次：{prob_60} 场</p>
+    <p>40%~50%常规场次：{prob_40_50} 场</p>
+</div>
+<div class="card">
+    <h4>2. 价值分布</h4>
+    <p>A档推荐场次：{a_count} 场</p>
+    <p>B档推荐场次：{b_count} 场</p>
+</div>
+</div>
+<div class="card">
+    <h4>3. 联赛特征</h4>
+    {league_text}
+</div>
+"""
+
+    def _gen_appendix(self):
+        terms = [
+            ('融合概率', '多个模型综合算出的结果发生概率，数值越高越容易中'),
+            ('平系策略', '专门挑上半场容易打平的比赛，双选「平平+平X」，胜率更稳'),
+            ('校准系数', '半场平局概率×0.7修正模型高估，更贴近真实赛果'),
+            ('EV期望收益', '长期反复买这个选项，平均每100块能赚多少钱；正数=长期赚，负数=长期亏'),
+            ('让球盘', '强队让弱队若干球之后再算胜平负，用来平衡强弱差距'),
+            ('二串一', '两场比赛都中才算赢，赔率是两场相乘，收益更高、难度更大'),
+        ]
+        
+        term_rows = ""
+        for term, desc in terms:
+            term_rows += f"<tr><td><strong>{term}</strong></td><td>{desc}</td></tr>"
+        
+        return f"""
+<h2>📚 附录：术语大白话对照表</h2>
+<table>
+<tr><th>术语</th><th>大白话解释</th></tr>
+{term_rows}
+</table>
+"""
+
+
+# ===================== 主函数 =====================
+def main():
+    parser = argparse.ArgumentParser(description='足球预测报告生成器')
+    parser.add_argument('--date', type=str, default=None, help='预测日期 YYYY-MM-DD')
+    parser.add_argument('--format', type=str, default='text', choices=['text', 'html'], help='输出格式')
+    parser.add_argument('--output', type=str, default=None, help='输出文件路径')
+    args = parser.parse_args()
+    
+    # 目标日期
+    if args.date:
+        target_date = datetime.strptime(args.date, '%Y-%m-%d')
+    else:
+        target_date = datetime.now()
+    
+    # ========== 示例数据（实际使用时替换为真实数据加载逻辑） ==========
+    sample_matches = [
+        MatchPrediction('001', '英超', '埃弗顿', '曼联', 
+                       datetime(2026,9,6,21,0), 1.25, 1.14, 1.0, 1.0,
+                       market_odds={'home':2.8, 'draw':3.2, 'away':2.08}),
+        MatchPrediction('002', '意甲', '帕尔马', '蒙扎',
+                       datetime(2026,9,6,21,0), 1.39, 1.07, 1.0, 1.0,
+                       market_odds={'home':2.7, 'draw':3.1, 'away':2.9}),
+        MatchPrediction('003', '西甲', '瓦伦西亚', '巴塞罗那',
+                       datetime(2026,9,6,22,15), 1.11, 1.52, 1.0, 1.0,
+                       market_odds={'home':5.5, 'draw':3.6, 'away':1.26}),
+        MatchPrediction('004', '英超', '阿森纳', '切尔西',
+                       datetime(2026,9,6,23,30), 2.32, 0.97, 1.0, 1.0,
+                       market_odds={'home':1.7, 'draw':3.4, 'away':4.2}),
+        MatchPrediction('005', '德甲', '法兰克福', '奥格斯堡',
+                       datetime(2026,9,6,23,30), 1.96, 1.32, 1.0, 1.0,
+                       market_odds={'home':1.86, 'draw':3.3, 'away':3.8}),
+        MatchPrediction('006', '意甲', '博洛尼亚', '萨索洛',
+                       datetime(2026,9,7,0,0), 1.92, 0.83, 1.0, 1.0,
+                       market_odds={'home':2.01, 'draw':3.2, 'away':3.5}),
+    ]
+    # =================================================================
+    
+    matches = sample_matches
+    
+    # 5. 生成报告
+    if args.format == "html":
+        reporter = HTMLReportGenerator(target_date, matches)
+        report = reporter.generate()
+        # 默认输出文件名：自动归档到reports文件夹，按日期+版本号命名
+        if not args.output:
+            os.makedirs("reports", exist_ok=True)
+            date_str = target_date.strftime("%Y%m%d")
+            version = 1
+            while os.path.exists(f"reports/报告_{date_str}_{version:02d}.html"):
+                version += 1
+            args.output = f"reports/报告_{date_str}_{version:02d}.html"
+        # 确保输出目录存在
+        out_dir = os.path.dirname(os.path.abspath(args.output))
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        with open(args.output, "w", encoding="utf-8") as f:
+            f.write(report)
+        print(f"\n[HTML报告已保存] {args.output}")
+        print(f"[提示] 请用浏览器打开该文件查看精美报告")
+    else:
+        # 文本版简要输出
+        print(f"\n=== 足球预测报告 {target_date.strftime('%Y-%m-%d')} ===")
+        for m in matches:
+            print(f"{m.home_team} vs {m.away_team} | {m.best_result[0]} {m.best_result[1]*100:.1f}% | {m.get_grade()}")
+        if args.output:
+            out_dir = os.path.dirname(os.path.abspath(args.output))
+            if out_dir:
+                os.makedirs(out_dir, exist_ok=True)
+            with open(args.output, "w", encoding="utf-8") as f:
+                f.write(report)
+            print(f"\n[报告已保存] {args.output}")
+    
+    print(f"\n[完成] 报告生成完毕")
+
+if __name__ == "__main__":
+    main()
+=======
 import pandas as pd
 import numpy as np
 import requests
@@ -1431,3 +2407,4 @@ def generate_report():
 
 if __name__ == "__main__":
     generate_report()
+>>>>>>> 0c53c178dd5902bba8974c384b353623eaf8d4c4
